@@ -24,15 +24,33 @@ from gaussian_renderer import GaussianModel
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+    finalT_path = os.path.join(model_path, name, "ours_{}".format(iteration), "finalT")
+    depth_path = os.path.join(model_path, name, "ours_{}".format(iteration), "depth")
+    weight_path = os.path.join(model_path, name, "ours_{}".format(iteration), "weight")
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
+    makedirs(finalT_path, exist_ok=True)
+    makedirs(depth_path, exist_ok=True)
+    makedirs(weight_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        rendering = render(view, gaussians, pipeline, background)["render"]
+        render_results = render(view, gaussians, pipeline, background)
+        rendering = render_results["render"]
         gt = view.original_image[0:3, :, :]
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        if 'finalT' and render_results.get('imgBuffer') is not None:
+            imgBuffer_byte_tensor = render_results["imgBuffer"]     # imgBuffer is the struct ImageState
+            C, H, W = gt.shape
+            finalT_byte_tensor = imgBuffer_byte_tensor[:4*H*W]
+            finalT = torch.frombuffer(memoryview(finalT_byte_tensor.cpu().numpy()), dtype=torch.float32).reshape((H, W))
+            torchvision.utils.save_image(finalT, os.path.join(finalT_path, '{0:05d}'.format(idx) + ".png"))
+        if 'depth':
+            if render_results.get('depth_map') is not None:
+                torchvision.utils.save_image(render_results['depth_map'] / render_results['depth_map'].max(), os.path.join(depth_path, '{0:05d}'.format(idx) + ".png"))
+            if render_results.get('weight_map') is not None:
+                torchvision.utils.save_image(render_results['weight_map'], os.path.join(weight_path, '{0:05d}'.format(idx) + ".png"))
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():

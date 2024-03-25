@@ -11,7 +11,11 @@
 
 import torch
 import math
-from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+try:
+    from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
+except ImportError:
+    print('>> package diff_gaussian_rasterization_depth not availbale, fall back to official diff_gaussian_rasterization')
+    from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
@@ -82,7 +86,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    rendered_image, radii, *extra_data = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -92,9 +96,20 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
 
+    if len(extra_data) == 1:
+        imgBuffer = extra_data[0]
+    elif len(extra_data) == 2:
+        depth_map = extra_data[0]
+        weight_map = extra_data[1]
+
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    return {"render": rendered_image,
-            "viewspace_points": screenspace_points,
-            "visibility_filter" : radii > 0,
-            "radii": radii}
+    return {
+        "render": rendered_image,
+        "viewspace_points": screenspace_points,
+        "visibility_filter" : radii > 0,
+        "radii": radii,
+        "imgBuffer": locals().get('imgBuffer'),
+        "depth_map": locals().get('depth_map'),
+        "weight_map": locals().get('weight_map'),
+    }

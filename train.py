@@ -15,7 +15,9 @@ from random import randint
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
+from typing import List
 from scene import Scene, GaussianModel
+from scene.cameras import Camera
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
@@ -74,8 +76,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Pick a random Camera
         if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+            viewpoint_stack: List[Camera] = scene.getTrainCameras().copy()
+        viewpoint_cam: Camera = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
         # Render
         if (iteration - 1) == debug_from:
@@ -84,12 +86,28 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        # [C=3, H=545, W=980], [P=182686, pos=3], [P=182686], [P=182686] int32
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+
+        loss_mask = 1.0
+        if opt.m_loss_weight and render_pkg.get('weight_map') is not None:
+            weight_map = render_pkg['weight_map']
+            loss_mask = weight_map.unsqueeze(0).expand(image.shape[0], -1, -1)
+        if (opt.m_loss_depth or opt.m_loss_depth_reverse) and render_pkg.get('depth_map') is not None:
+            depth_map = render_pkg['depth_map']
+            depth_map_act = torch.sigmoid(depth_map - depth_map.mean())
+            if opt.m_loss_depth:            # punish more on near things
+                depth_map_act = 1 - depth_map_act
+            if opt.m_loss_depth_reverse:    # punish more on far things
+                pass
+            loss_mask = depth_map_act.unsqueeze(0).expand(image.shape[0], -1, -1)
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        Ll1 = l1_loss(image, gt_image, reduction='none') * loss_mask
+        Lssim = ssim(image, gt_image, reduction='none') * loss_mask
+        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - Lssim)
+        if loss.numel() > 1: loss = loss.mean()
         loss.backward()
 
         iter_end.record()
@@ -104,7 +122,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, Ll1.mean(), loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -136,9 +154,11 @@ def prepare_output_and_logger(args):
         if os.getenv('OAR_JOB_ID'):
             unique_str=os.getenv('OAR_JOB_ID')
         else:
-            unique_str = str(uuid.uuid4())
-        args.model_path = os.path.join("./output/", unique_str[0:10])
-        
+            from datetime import datetime
+            unique_str = str(datetime.now()).replace(' ', 'T').replace(':', '-')
+            # unique_str = str(uuid.uuid4())[0:10]
+        args.model_path = os.path.join("./output/", unique_str)
+
     # Set up output folder
     print("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)
@@ -207,6 +227,7 @@ if __name__ == "__main__":
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
+    print('hprams:', vars(args))
     
     print("Optimizing " + args.model_path)
 
