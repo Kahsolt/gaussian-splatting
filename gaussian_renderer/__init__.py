@@ -9,13 +9,17 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+DGR_PROVIDER = 'ours'
+
 import torch
 import math
-try:
-    from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
-except ImportError:
-    print('>> package diff_gaussian_rasterization_depth not availbale, fall back to official diff_gaussian_rasterization')
+if DGR_PROVIDER == 'original':
     from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+elif DGR_PROVIDER == 'depth':
+    from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
+elif DGR_PROVIDER == 'ours':
+    from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
+print('>> DGR_PROVIDER:', DGR_PROVIDER)
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
@@ -57,6 +61,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
+    importance = pc.get_importance
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -85,6 +90,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
 
+    extra_kwargs = {}
+    if DGR_PROVIDER == 'ours':
+        extra_kwargs = {
+            'importances': importance,
+        }
+
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     rendered_image, radii, *extra_data = rasterizer(
         means3D = means3D,
@@ -94,11 +105,14 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         opacities = opacity,
         scales = scales,
         rotations = rotations,
-        cov3D_precomp = cov3D_precomp)
+        cov3D_precomp = cov3D_precomp,
+        **extra_kwargs,
+    )
 
-    if len(extra_data) == 1:
+    if DGR_PROVIDER == 'ours':
         imgBuffer = extra_data[0]
-    elif len(extra_data) == 2:
+        importance_map = extra_data[1]
+    elif DGR_PROVIDER == 'depth':
         depth_map = extra_data[0]
         weight_map = extra_data[1]
 
@@ -110,6 +124,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         "visibility_filter" : radii > 0,
         "radii": radii,
         "imgBuffer": locals().get('imgBuffer'),
+        "importance_map": locals().get('importance_map'),
         "depth_map": locals().get('depth_map'),
         "weight_map": locals().get('weight_map'),
     }

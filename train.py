@@ -101,6 +101,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if opt.m_loss_depth_reverse:    # punish more on far things
                 pass
             loss_mask = depth_map_act.unsqueeze(0).expand(image.shape[0], -1, -1)
+        if opt.m_loss_importance and render_pkg.get('importance_map') is not None:
+            importance_map = render_pkg['importance_map']
+            loss_mask = importance_map.unsqueeze(0).expand(image.shape[0], -1, -1)
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()

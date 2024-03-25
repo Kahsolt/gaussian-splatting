@@ -14,25 +14,30 @@ from scene import Scene
 import os
 from tqdm import tqdm
 from os import makedirs
-from gaussian_renderer import render
+from gaussian_renderer import render, DGR_PROVIDER
 import torchvision
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
+def render_set(model_path, name, iteration, views, gaussians:GaussianModel, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
-    finalT_path = os.path.join(model_path, name, "ours_{}".format(iteration), "finalT")
-    depth_path = os.path.join(model_path, name, "ours_{}".format(iteration), "depth")
-    weight_path = os.path.join(model_path, name, "ours_{}".format(iteration), "weight")
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
-    makedirs(finalT_path, exist_ok=True)
-    makedirs(depth_path, exist_ok=True)
-    makedirs(weight_path, exist_ok=True)
+
+    if DGR_PROVIDER == 'ours':
+        finalT_path = os.path.join(model_path, name, "ours_{}".format(iteration), "finalT")
+        importance_path = os.path.join(model_path, name, "ours_{}".format(iteration), "importance")
+        makedirs(finalT_path, exist_ok=True)
+        makedirs(importance_path, exist_ok=True)
+    elif DGR_PROVIDER == 'depth':
+        depth_path = os.path.join(model_path, name, "ours_{}".format(iteration), "depth")
+        weight_path = os.path.join(model_path, name, "ours_{}".format(iteration), "weight")
+        makedirs(depth_path, exist_ok=True)
+        makedirs(weight_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         render_results = render(view, gaussians, pipeline, background)
@@ -40,17 +45,16 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         gt = view.original_image[0:3, :, :]
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
-        if 'finalT' and render_results.get('imgBuffer') is not None:
-            imgBuffer_byte_tensor = render_results["imgBuffer"]     # imgBuffer is the struct ImageState
+
+        if DGR_PROVIDER == 'ours':
             C, H, W = gt.shape
-            finalT_byte_tensor = imgBuffer_byte_tensor[:4*H*W]
+            finalT_byte_tensor = render_results["imgBuffer"][:4*H*W]  # imgBuffer is the struct ImageState
             finalT = torch.frombuffer(memoryview(finalT_byte_tensor.cpu().numpy()), dtype=torch.float32).reshape((H, W))
             torchvision.utils.save_image(finalT, os.path.join(finalT_path, '{0:05d}'.format(idx) + ".png"))
-        if 'depth':
-            if render_results.get('depth_map') is not None:
-                torchvision.utils.save_image(render_results['depth_map'] / render_results['depth_map'].max(), os.path.join(depth_path, '{0:05d}'.format(idx) + ".png"))
-            if render_results.get('weight_map') is not None:
-                torchvision.utils.save_image(render_results['weight_map'], os.path.join(weight_path, '{0:05d}'.format(idx) + ".png"))
+            torchvision.utils.save_image(gaussians.importance_activation(render_results['importance_map']), os.path.join(importance_path, '{0:05d}'.format(idx) + ".png"))
+        elif DGR_PROVIDER == 'depth':
+            torchvision.utils.save_image(render_results['depth_map'] / render_results['depth_map'].max(), os.path.join(depth_path, '{0:05d}'.format(idx) + ".png"))
+            torchvision.utils.save_image(render_results['weight_map'], os.path.join(weight_path, '{0:05d}'.format(idx) + ".png"))
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
