@@ -10,3 +10,5 @@ screenshots
 data/
 submodules/*
 !submodules/*.cmd
+SIBR_viewers_bin/*
+!SIBR_viewers_bin/*.cmd
