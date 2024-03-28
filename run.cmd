@@ -17,6 +17,10 @@ python train.py -s data\tandt\train -w
 python render.py -m output\ac0e8170-5
 
 
+:no_point_move
+python train.py -s data\tandt\train --position_lr_init 0.0 --position_lr_final 0.0
+
+
 :viewers
 REM monitor gs training process
 SIBR_remoteGaussian_app.exe

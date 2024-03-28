@@ -14,8 +14,10 @@ from scene import Scene
 import os
 from tqdm import tqdm
 from os import makedirs
-from gaussian_renderer import render, DGR_PROVIDER
+from gaussian_renderer import render, DGR_PROVIDER, ImageState
 import torchvision
+import seaborn as sns
+import matplotlib.pyplot as plt
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
@@ -29,10 +31,13 @@ def render_set(model_path, name, iteration, views, gaussians:GaussianModel, pipe
     makedirs(gts_path, exist_ok=True)
 
     if DGR_PROVIDER == 'ours':
-        finalT_path = os.path.join(model_path, name, "ours_{}".format(iteration), "finalT")
         importance_path = os.path.join(model_path, name, "ours_{}".format(iteration), "importance")
-        makedirs(finalT_path, exist_ok=True)
         makedirs(importance_path, exist_ok=True)
+    elif DGR_PROVIDER == 'ours-dev':
+        finalT_path = os.path.join(model_path, name, "ours_{}".format(iteration), "finalT")
+        n_contrib_path = os.path.join(model_path, name, "ours_{}".format(iteration), "n_contrib")
+        makedirs(finalT_path, exist_ok=True)
+        makedirs(n_contrib_path, exist_ok=True)
     elif DGR_PROVIDER == 'depth':
         depth_path = os.path.join(model_path, name, "ours_{}".format(iteration), "depth")
         weight_path = os.path.join(model_path, name, "ours_{}".format(iteration), "weight")
@@ -47,11 +52,14 @@ def render_set(model_path, name, iteration, views, gaussians:GaussianModel, pipe
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
 
         if DGR_PROVIDER == 'ours':
-            C, H, W = gt.shape
-            finalT_byte_tensor = render_results["imgBuffer"][:4*H*W]  # imgBuffer is the struct ImageState
-            finalT = torch.frombuffer(memoryview(finalT_byte_tensor.cpu().numpy()), dtype=torch.float32).reshape((H, W))
-            torchvision.utils.save_image(finalT, os.path.join(finalT_path, '{0:05d}'.format(idx) + ".png"))
             torchvision.utils.save_image(gaussians.importance_activation(render_results['importance_map']), os.path.join(importance_path, '{0:05d}'.format(idx) + ".png"))
+        if DGR_PROVIDER == 'ours-dev':
+            img_state: ImageState = render_results["img_state"]
+            torchvision.utils.save_image(img_state.final_T, os.path.join(finalT_path, '{0:05d}'.format(idx) + ".png"))
+            plt.clf()
+            sns.heatmap(render_results["n_contrib"].cpu().numpy(), cbar=True, vmin=0, vmax=400)     # FIXME: magic vrng limit
+            plt.savefig(os.path.join(n_contrib_path, '{0:05d}'.format(idx) + ".png"), dpi=600)
+            plt.close()
         elif DGR_PROVIDER == 'depth':
             torchvision.utils.save_image(render_results['depth_map'] / render_results['depth_map'].max(), os.path.join(depth_path, '{0:05d}'.format(idx) + ".png"))
             torchvision.utils.save_image(render_results['weight_map'], os.path.join(weight_path, '{0:05d}'.format(idx) + ".png"))

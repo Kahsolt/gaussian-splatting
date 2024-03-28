@@ -9,9 +9,10 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-DGR_PROVIDER = 'ours'
+DGR_PROVIDER = 'ours-dev'
 
 import torch
+from torch import Tensor
 import math
 if DGR_PROVIDER == 'original':
     from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
@@ -19,9 +20,43 @@ elif DGR_PROVIDER == 'depth':
     from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
 elif DGR_PROVIDER == 'ours':
     from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
+elif DGR_PROVIDER == 'ours-dev':
+    from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
 print('>> DGR_PROVIDER:', DGR_PROVIDER)
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
+from typing import Tuple
+
+class ImageState:
+
+    def __init__(self, buffer:Tensor, size:Tuple[int, int], align:int=128):
+        H, W = size
+        N = H * W
+        offset = 0
+        buffer = buffer.cpu().numpy()
+
+        def next_offset() -> int:
+            nonlocal offset
+            while offset % align: 
+                offset += 1
+
+        next_offset()
+        final_T = torch.frombuffer(memoryview(buffer[offset:offset+4*N]), dtype=torch.float32).reshape((H, W))
+        next_offset()
+        n_contrib = torch.frombuffer(memoryview(buffer[offset:offset+4*N]), dtype=torch.int32).reshape((H, W))
+        next_offset()
+        ranges = torch.frombuffer(memoryview(buffer[offset:offset+8*N]), dtype=torch.int32).reshape((H, W, 2))
+
+        self._final_T = final_T      # float, 4 bytes
+        self._n_contrib = n_contrib  # uint32_t, 4 bytes
+        self._ranges = ranges        # uint2, 8 bytes
+
+    @property
+    def final_T(self): return self._final_T
+    @property
+    def n_contrib(self): return self._n_contrib
+    @property
+    def ranges(self): return self._ranges
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
@@ -110,8 +145,13 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     )
 
     if DGR_PROVIDER == 'ours':
+        tmp = extra_data[0]
+        importance_map = radii
+        radii = tmp
+    elif DGR_PROVIDER == 'ours-dev':
         imgBuffer = extra_data[0]
-        importance_map = extra_data[1]
+        img_state = ImageState(imgBuffer, (raster_settings.image_height, raster_settings.image_width))
+        n_contrib = extra_data[1]
     elif DGR_PROVIDER == 'depth':
         depth_map = extra_data[0]
         weight_map = extra_data[1]
@@ -123,7 +163,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         "viewspace_points": screenspace_points,
         "visibility_filter" : radii > 0,
         "radii": radii,
-        "imgBuffer": locals().get('imgBuffer'),
+        "img_state": locals().get('img_state'),
+        "n_contrib": locals().get('n_contrib'),
         "importance_map": locals().get('importance_map'),
         "depth_map": locals().get('depth_map'),
         "weight_map": locals().get('weight_map'),
