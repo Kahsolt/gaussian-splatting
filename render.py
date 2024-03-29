@@ -52,7 +52,7 @@ def render_set(model_path, name, iteration, views, gaussians:GaussianModel, pipe
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
 
         if DGR_PROVIDER == 'ours':
-            torchvision.utils.save_image(gaussians.importance_activation(render_results['importance_map']), os.path.join(importance_path, '{0:05d}'.format(idx) + ".png"))
+            torchvision.utils.save_image(gaussians.importance_activation(render_results['importance_map']), os.path.join(importance_path, '{0:05d}'.format(idx) + ".png"), normalize=True)
         if DGR_PROVIDER == 'ours-dev':
             img_state: ImageState = render_results["img_state"]
             torchvision.utils.save_image(img_state.final_T, os.path.join(finalT_path, '{0:05d}'.format(idx) + ".png"))

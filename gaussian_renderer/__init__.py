@@ -9,7 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-DGR_PROVIDER = 'ours-dev'
+DGR_PROVIDER = 'ours'
 
 import torch
 from torch import Tensor
