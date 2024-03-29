@@ -42,7 +42,6 @@ class GaussianModel:
 
         self.rotation_activation = torch.nn.functional.normalize
 
-
     def __init__(self, sh_degree : int):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
@@ -130,25 +129,41 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
+    def create_from_pcd(self, pcd: BasicPointCloud, spatial_lr_scale: float):
+        points = torch.from_numpy(np.asarray(pcd.points)).float().cuda()
+        colors = torch.from_numpy(np.asarray(pcd.colors)).float().cuda()
+
+        print("Number of points loaded:", points.shape[0])
+
+        # 每个点到最近三个邻居的平均距离的平方
+        dist2 = torch.clamp_min(distCUDA2(points), 0.0000001)
+        if not 'show':
+            import matplotlib.pyplot as plt
+            plt.hist(dist2.sqrt().log().flatten().cpu().numpy(), bins=100)
+            plt.show()
+        # 删掉离群点
+        mask = dist2.sqrt().log() < -4
+        points = points[mask]
+        colors = colors[mask]
+        dists  = dist2[mask]
+
         self.spatial_lr_scale = spatial_lr_scale
-        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
-        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
-        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
-        features[:, :3, 0 ] = fused_color
-        features[:, 3:, 1:] = 0.0
+        n_pts = points.shape[0]
+        fused_color = RGB2SH(colors)
+        features = torch.zeros((n_pts, 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
+        features[:, :3, 0 ] = fused_color  # dc
+        features[:, 3:, 1:] = 0.0          # dummy, no effects
 
-        print("Number of points at initialisation : ", fused_point_cloud.shape[0])
+        print("Number of points initialized:", n_pts)
 
-        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
-        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
-        rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
+        scales = torch.log(torch.sqrt(dists))[...,None].repeat(1, 3)
+        rots = torch.zeros((n_pts, 4), device="cuda")
         rots[:, 0] = 1
 
-        opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
-        importances = self.inverse_importance_activation(torch.zeros((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
+        opacities = inverse_sigmoid(0.1 * torch.ones((n_pts, 1), dtype=torch.float, device="cuda"))
+        importances = self.inverse_importance_activation(torch.zeros((n_pts, 1), dtype=torch.float, device="cuda"))
 
-        self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
+        self._xyz = nn.Parameter(points.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
