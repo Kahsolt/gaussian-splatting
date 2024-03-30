@@ -3,48 +3,37 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import torch
-import numpy as np
-from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
-from torch import nn
 import os
-from utils.system_utils import mkdir_p
+import numpy as np
+from typing import NamedTuple
+
+import torch
+from torch import nn
+import torch.nn.functional as F
 from plyfile import PlyData, PlyElement
-from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
-from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation
+
+from modules.utils.sh_utils import RGB2SH
+from modules.utils.general_utils import strip_symmetric, build_scaling_rotation, inverse_sigmoid, get_expon_lr_func, build_rotation
+
+
+class BasicPointCloud(NamedTuple):
+    points: np.ndarray
+    colors: np.ndarray
+    normals: np.ndarray
+
 
 class GaussianModel:
 
-    def setup_functions(self):
-        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
-            L = build_scaling_rotation(scaling_modifier * scaling, rotation)
-            actual_covariance = L @ L.transpose(1, 2)
-            symm = strip_symmetric(actual_covariance)
-            return symm
-        
-        self.scaling_activation = torch.exp
-        self.scaling_inverse_activation = torch.log
-
-        self.covariance_activation = build_covariance_from_scaling_rotation
-
-        self.opacity_activation = torch.sigmoid
-        self.inverse_opacity_activation = inverse_sigmoid
-        self.importance_activation = torch.tanh
-        self.inverse_importance_activation = torch.atanh
-
-        self.rotation_activation = torch.nn.functional.normalize
-
-    def __init__(self, sh_degree : int):
+    def __init__(self, sh_degree:int=3):
         self.active_sh_degree = 0
-        self.max_sh_degree = sh_degree  
+        self.max_sh_degree = sh_degree
         self._xyz = torch.empty(0)
         self._features_dc = torch.empty(0)
         self._features_rest = torch.empty(0)
@@ -59,6 +48,25 @@ class GaussianModel:
         self.percent_dense = 0
         self.spatial_lr_scale = 0
         self.setup_functions()
+
+    def setup_functions(self):
+        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
+            L = build_scaling_rotation(scaling_modifier * scaling, rotation)
+            actual_covariance = L @ L.transpose(1, 2)
+            symm = strip_symmetric(actual_covariance)
+            return symm
+
+        self.scaling_activation = torch.exp
+        self.scaling_inverse_activation = torch.log
+
+        self.covariance_activation = build_covariance_from_scaling_rotation
+
+        self.opacity_activation = torch.sigmoid
+        self.inverse_opacity_activation = inverse_sigmoid
+        self.importance_activation = torch.tanh
+        self.inverse_importance_activation = torch.atanh
+
+        self.rotation_activation = F.normalize
 
     def capture(self):
         return (
@@ -76,20 +84,20 @@ class GaussianModel:
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
         )
-    
+
     def restore(self, model_args, training_args):
-        (self.active_sh_degree, 
-        self._xyz, 
-        self._features_dc, 
+        (self.active_sh_degree,
+        self._xyz,
+        self._features_dc,
         self._features_rest,
-        self._scaling, 
-        self._rotation, 
+        self._scaling,
+        self._rotation,
         self._opacity,
         self._importance,
-        self.max_radii2D, 
-        xyz_gradient_accum, 
+        self.max_radii2D,
+        xyz_gradient_accum,
         denom,
-        opt_dict, 
+        opt_dict,
         self.spatial_lr_scale) = model_args
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
@@ -99,25 +107,25 @@ class GaussianModel:
     @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
-    
+
     @property
     def get_rotation(self):
         return self.rotation_activation(self._rotation)
-    
+
     @property
     def get_xyz(self):
         return self._xyz
-    
+
     @property
     def get_features(self):
         features_dc = self._features_dc
         features_rest = self._features_rest
         return torch.cat((features_dc, features_rest), dim=1)
-    
+
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
-    
+
     @property
     def get_importance(self):
         return self.importance_activation(self._importance)
@@ -217,7 +225,7 @@ class GaussianModel:
         return l
 
     def save_ply(self, path):
-        mkdir_p(os.path.dirname(path))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
 
         xyz = self._xyz.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
@@ -367,8 +375,8 @@ class GaussianModel:
         "f_rest": new_features_rest,
         "opacity": new_opacities,
         "importance": new_importances,
-        "scaling" : new_scaling,
-        "rotation" : new_rotation}
+        "scaling": new_scaling,
+        "rotation": new_rotation}
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
@@ -414,7 +422,7 @@ class GaussianModel:
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
-        
+
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]

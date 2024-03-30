@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -11,29 +11,33 @@
 
 import os
 import sys
-from PIL import Image
-from typing import NamedTuple
-from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
-    read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
-from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
-import numpy as np
 import json
 from pathlib import Path
+from typing import NamedTuple
+
+import numpy as np
+from PIL import Image
 from plyfile import PlyData, PlyElement
-from utils.sh_utils import SH2RGB
-from scene.gaussian_model import BasicPointCloud
+
+from modules.gaussian_model import BasicPointCloud
+from modules.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
+    read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
+from modules.utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
+from modules.utils.sh_utils import SH2RGB
+
 
 class CameraInfo(NamedTuple):
     uid: int
-    R: np.array
-    T: np.array
-    FovY: np.array
-    FovX: np.array
-    image: np.array
+    R: np.ndarray
+    T: np.ndarray
+    FovY: np.ndarray
+    FovX: np.ndarray
+    image: np.ndarray
     image_path: str
     image_name: str
     width: int
     height: int
+
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -41,6 +45,7 @@ class SceneInfo(NamedTuple):
     test_cameras: list
     nerf_normalization: dict
     ply_path: str
+
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
@@ -64,6 +69,34 @@ def getNerfppNorm(cam_info):
     translate = -center
 
     return {"translate": translate, "radius": radius}
+
+
+def fetchPly(path):
+    plydata = PlyData.read(path)
+    vertices = plydata['vertex']
+    positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
+    colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
+    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    return BasicPointCloud(points=positions, colors=colors, normals=normals)
+
+
+def storePly(path, xyz, rgb):
+    # Define the dtype for the structured array
+    dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
+            ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4'),
+            ('red', 'u1'), ('green', 'u1'), ('blue', 'u1')]
+
+    normals = np.zeros_like(xyz)
+
+    elements = np.empty(xyz.shape[0], dtype=dtype)
+    attributes = np.concatenate((xyz, normals, rgb), axis=1)
+    elements[:] = list(map(tuple, attributes))
+
+    # Create the PlyData object and write to file
+    vertex_element = PlyElement.describe(elements, 'vertex')
+    ply_data = PlyData([vertex_element])
+    ply_data.write(path)
+
 
 def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
     cam_infos = []
@@ -98,36 +131,11 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height)
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
 
-def fetchPly(path):
-    plydata = PlyData.read(path)
-    vertices = plydata['vertex']
-    positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
-    colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
-    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
-    return BasicPointCloud(points=positions, colors=colors, normals=normals)
-
-def storePly(path, xyz, rgb):
-    # Define the dtype for the structured array
-    dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
-            ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4'),
-            ('red', 'u1'), ('green', 'u1'), ('blue', 'u1')]
-    
-    normals = np.zeros_like(xyz)
-
-    elements = np.empty(xyz.shape[0], dtype=dtype)
-    attributes = np.concatenate((xyz, normals, rgb), axis=1)
-    elements[:] = list(map(tuple, attributes))
-
-    # Create the PlyData object and write to file
-    vertex_element = PlyElement.describe(elements, 'vertex')
-    ply_data = PlyData([vertex_element])
-    ply_data.write(path)
 
 def readColmapSceneInfo(path, images, eval, llffhold=8):
     try:
@@ -143,7 +151,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
 
     reading_dir = "images" if images == None else images
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
-    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x: x.image_name)
 
     if eval:
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
@@ -169,16 +177,11 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     except:
         pcd = None
 
-    scene_info = SceneInfo(point_cloud=pcd,
-                           train_cameras=train_cam_infos,
-                           test_cameras=test_cam_infos,
-                           nerf_normalization=nerf_normalization,
-                           ply_path=ply_path)
-    return scene_info
+    return SceneInfo(point_cloud=pcd, train_cameras=train_cam_infos, test_cameras=test_cam_infos, nerf_normalization=nerf_normalization, ply_path=ply_path)
+
 
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):
     cam_infos = []
-
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
         fovx = contents["camera_angle_x"]
@@ -210,20 +213,19 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
 
             fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
-            FovY = fovy 
+            FovY = fovy
             FovX = fovx
 
-            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
-            
+            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
     return cam_infos
+
 
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     print("Reading Training Transforms")
     train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
     print("Reading Test Transforms")
     test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
-    
+
     if not eval:
         train_cam_infos.extend(test_cam_infos)
         test_cam_infos = []
@@ -235,7 +237,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
         # Since this data set has no colmap data, we start with random points
         num_pts = 100_000
         print(f"Generating random point cloud ({num_pts})...")
-        
+
         # We create random points inside the bounds of the synthetic Blender scenes
         xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
         shs = np.random.random((num_pts, 3)) / 255.0
@@ -247,14 +249,10 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     except:
         pcd = None
 
-    scene_info = SceneInfo(point_cloud=pcd,
-                           train_cameras=train_cam_infos,
-                           test_cameras=test_cam_infos,
-                           nerf_normalization=nerf_normalization,
-                           ply_path=ply_path)
-    return scene_info
+    return SceneInfo(point_cloud=pcd, train_cameras=train_cam_infos, test_cameras=test_cam_infos, nerf_normalization=nerf_normalization, ply_path=ply_path)
+
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender": readNerfSyntheticInfo
 }

@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -13,14 +13,10 @@ import numpy as np
 import collections
 import struct
 
-CameraModel = collections.namedtuple(
-    "CameraModel", ["model_id", "model_name", "num_params"])
-Camera = collections.namedtuple(
-    "Camera", ["id", "model", "width", "height", "params"])
-BaseImage = collections.namedtuple(
-    "Image", ["id", "qvec", "tvec", "camera_id", "name", "xys", "point3D_ids"])
-Point3D = collections.namedtuple(
-    "Point3D", ["id", "xyz", "rgb", "error", "image_ids", "point2D_idxs"])
+CameraModel = collections.namedtuple("CameraModel", ["model_id", "model_name", "num_params"])
+Camera = collections.namedtuple("Camera", ["id", "model", "width", "height", "params"])
+BaseImage = collections.namedtuple("Image", ["id", "qvec", "tvec", "camera_id", "name", "xys", "point3D_ids"])
+Point3D = collections.namedtuple("Point3D", ["id", "xyz", "rgb", "error", "image_ids", "point2D_idxs"])
 CAMERA_MODELS = {
     CameraModel(model_id=0, model_name="SIMPLE_PINHOLE", num_params=3),
     CameraModel(model_id=1, model_name="PINHOLE", num_params=4),
@@ -34,10 +30,8 @@ CAMERA_MODELS = {
     CameraModel(model_id=9, model_name="RADIAL_FISHEYE", num_params=5),
     CameraModel(model_id=10, model_name="THIN_PRISM_FISHEYE", num_params=12)
 }
-CAMERA_MODEL_IDS = dict([(camera_model.model_id, camera_model)
-                         for camera_model in CAMERA_MODELS])
-CAMERA_MODEL_NAMES = dict([(camera_model.model_name, camera_model)
-                           for camera_model in CAMERA_MODELS])
+CAMERA_MODEL_IDS = dict([(camera_model.model_id, camera_model) for camera_model in CAMERA_MODELS])
+CAMERA_MODEL_NAMES = dict([(camera_model.model_name, camera_model) for camera_model in CAMERA_MODELS])
 
 
 def qvec2rotmat(qvec):
@@ -65,9 +59,11 @@ def rotmat2qvec(R):
         qvec *= -1
     return qvec
 
+
 class Image(BaseImage):
     def qvec2rotmat(self):
         return qvec2rotmat(self.qvec)
+
 
 def read_next_bytes(fid, num_bytes, format_char_sequence, endian_character="<"):
     """Read and unpack the next bytes from a binary file.
@@ -128,8 +124,6 @@ def read_points3D_binary(path_to_model_file):
         void Reconstruction::ReadPoints3DBinary(const std::string& path)
         void Reconstruction::WritePoints3DBinary(const std::string& path)
     """
-
-
     with open(path_to_model_file, "rb") as fid:
         num_points = read_next_bytes(fid, 8, "Q")[0]
 
@@ -177,6 +171,34 @@ def read_intrinsics_text(path):
                                             params=params)
     return cameras
 
+def read_extrinsics_text(path):
+    """
+    Taken from https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
+    """
+    images = {}
+    with open(path, "r") as fid:
+        while True:
+            line = fid.readline()
+            if not line:
+                break
+            line = line.strip()
+            if len(line) > 0 and line[0] != "#":
+                elems = line.split()
+                image_id = int(elems[0])
+                qvec = np.array(tuple(map(float, elems[1:5])))
+                tvec = np.array(tuple(map(float, elems[5:8])))
+                camera_id = int(elems[8])
+                image_name = elems[9]
+                elems = fid.readline().split()
+                xys = np.column_stack([tuple(map(float, elems[0::3])),
+                                       tuple(map(float, elems[1::3]))])
+                point3D_ids = np.array(tuple(map(int, elems[2::3])))
+                images[image_id] = Image(
+                    id=image_id, qvec=qvec, tvec=tvec,
+                    camera_id=camera_id, name=image_name,
+                    xys=xys, point3D_ids=point3D_ids)
+    return images
+
 def read_extrinsics_binary(path_to_model_file):
     """
     see: src/base/reconstruction.cc
@@ -211,7 +233,6 @@ def read_extrinsics_binary(path_to_model_file):
                 xys=xys, point3D_ids=point3D_ids)
     return images
 
-
 def read_intrinsics_binary(path_to_model_file):
     """
     see: src/base/reconstruction.cc
@@ -240,40 +261,9 @@ def read_intrinsics_binary(path_to_model_file):
         assert len(cameras) == num_cameras
     return cameras
 
-
-def read_extrinsics_text(path):
-    """
-    Taken from https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
-    """
-    images = {}
-    with open(path, "r") as fid:
-        while True:
-            line = fid.readline()
-            if not line:
-                break
-            line = line.strip()
-            if len(line) > 0 and line[0] != "#":
-                elems = line.split()
-                image_id = int(elems[0])
-                qvec = np.array(tuple(map(float, elems[1:5])))
-                tvec = np.array(tuple(map(float, elems[5:8])))
-                camera_id = int(elems[8])
-                image_name = elems[9]
-                elems = fid.readline().split()
-                xys = np.column_stack([tuple(map(float, elems[0::3])),
-                                       tuple(map(float, elems[1::3]))])
-                point3D_ids = np.array(tuple(map(int, elems[2::3])))
-                images[image_id] = Image(
-                    id=image_id, qvec=qvec, tvec=tvec,
-                    camera_id=camera_id, name=image_name,
-                    xys=xys, point3D_ids=point3D_ids)
-    return images
-
-
 def read_colmap_bin_array(path):
     """
     Taken from https://github.com/colmap/colmap/blob/dev/scripts/python/read_dense.py
-
     :param path: path to the colmap binary file.
     :return: nd array with the floating point values in the value
     """

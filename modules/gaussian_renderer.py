@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -11,9 +11,12 @@
 
 DGR_PROVIDER = 'ours'
 
+import math
+from typing import Tuple
+
 import torch
 from torch import Tensor
-import math
+
 if DGR_PROVIDER == 'original':
     from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 elif DGR_PROVIDER == 'depth':
@@ -23,9 +26,10 @@ elif DGR_PROVIDER == 'ours':
 elif DGR_PROVIDER == 'ours-dev':
     from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
 print('>> DGR_PROVIDER:', DGR_PROVIDER)
-from scene.gaussian_model import GaussianModel
-from utils.sh_utils import eval_sh
-from typing import Tuple
+
+from modules.gaussian_model import GaussianModel
+from modules.utils.sh_utils import eval_sh
+
 
 class ImageState:
 
@@ -37,7 +41,7 @@ class ImageState:
 
         def next_offset() -> int:
             nonlocal offset
-            while offset % align: 
+            while offset % align:
                 offset += 1
 
         next_offset()
@@ -58,13 +62,14 @@ class ImageState:
     @property
     def ranges(self): return self._ranges
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+
+def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
-    Render the scene. 
-    
+    Render the scene.
+
     Background tensor (bg_color) must be on GPU!
     """
- 
+
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
@@ -131,7 +136,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             'importances': importance,
         }
 
-    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+    # Rasterize visible Gaussians to image, obtain their radii (on screen).
     rendered_image, radii, *extra_data = rasterizer(
         means3D = means3D,
         means2D = means2D,
@@ -161,7 +166,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     return {
         "render": rendered_image,
         "viewspace_points": screenspace_points,
-        "visibility_filter" : radii > 0,
+        "visibility_filter": radii > 0,
         "radii": radii,
         "img_state": locals().get('img_state'),
         "n_contrib": locals().get('n_contrib'),

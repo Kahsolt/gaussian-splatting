@@ -3,26 +3,28 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
 
 import os
-import random
 import json
-from utils.system_utils import searchForMaxIteration
-from scene.dataset_readers import sceneLoadTypeCallbacks
-from scene.gaussian_model import GaussianModel
-from arguments import ModelParams
-from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+import random
+
+from modules.dataset_readers import SceneInfo, sceneLoadTypeCallbacks
+from modules.gaussian_model import GaussianModel
+from modules.arguments import ModelParams
+from modules.utils.general_utils import searchForMaxIteration
+from modules.utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+
 
 class Scene:
 
-    gaussians : GaussianModel
+    gaussians: GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args: ModelParams, gaussians: GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -40,6 +42,7 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
+        scene_info: SceneInfo
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):

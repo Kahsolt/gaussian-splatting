@@ -9,14 +9,23 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import torch
+import os
 import sys
-from datetime import datetime
-import numpy as np
 import random
+from datetime import datetime
+
+import torch
+import numpy as np
+
+
+def searchForMaxIteration(folder):
+    saved_iters = [int(fname.split("_")[-1]) for fname in os.listdir(folder)]
+    return max(saved_iters)
+
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
+
 
 def PILtoTorch(pil_image, resolution):
     resized_image_PIL = pil_image.resize(resolution)
@@ -26,9 +35,8 @@ def PILtoTorch(pil_image, resolution):
     else:
         return resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
 
-def get_expon_lr_func(
-    lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
-):
+
+def get_expon_lr_func(lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000):
     """
     Copied from Plenoxels
 
@@ -61,6 +69,7 @@ def get_expon_lr_func(
 
     return helper
 
+
 def strip_lowerdiag(L):
     uncertainty = torch.zeros((L.shape[0], 6), dtype=torch.float, device="cuda")
 
@@ -72,8 +81,10 @@ def strip_lowerdiag(L):
     uncertainty[:, 5] = L[:, 2, 2]
     return uncertainty
 
+
 def strip_symmetric(sym):
     return strip_lowerdiag(sym)
+
 
 def build_rotation(r):
     norm = torch.sqrt(r[:,0]*r[:,0] + r[:,1]*r[:,1] + r[:,2]*r[:,2] + r[:,3]*r[:,3])
@@ -98,6 +109,7 @@ def build_rotation(r):
     R[:, 2, 2] = 1 - 2 * (x*x + y*y)
     return R
 
+
 def build_scaling_rotation(s, r):
     L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
     R = build_rotation(r)
@@ -108,6 +120,7 @@ def build_scaling_rotation(s, r):
 
     L = R @ L
     return L
+
 
 def safe_state(silent):
     old_f = sys.stdout

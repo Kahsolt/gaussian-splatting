@@ -9,15 +9,11 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import torch
 import math
-import numpy as np
-from typing import NamedTuple
 
-class BasicPointCloud(NamedTuple):
-    points : np.array
-    colors : np.array
-    normals : np.array
+import torch
+import numpy as np
+
 
 def geom_transform_points(points, transf_matrix):
     P, _ = points.shape
@@ -27,6 +23,7 @@ def geom_transform_points(points, transf_matrix):
 
     denom = points_out[..., 3:] + 0.0000001
     return (points_out[..., :3] / denom).squeeze(dim=0)
+
 
 def getWorld2View(R, t):
     Rt = np.zeros((4, 4))
@@ -47,6 +44,7 @@ def getWorld2View2(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
     C2W[:3, 3] = cam_center
     Rt = np.linalg.inv(C2W)
     return np.float32(Rt)
+
 
 def getProjectionMatrix(znear, zfar, fovX, fovY):
     tanHalfFovY = math.tan((fovY / 2))
@@ -69,6 +67,7 @@ def getProjectionMatrix(znear, zfar, fovX, fovY):
     P[2, 2] = z_sign * zfar / (zfar - znear)
     P[2, 3] = -(zfar * znear) / (zfar - znear)
     return P
+
 
 def fov2focal(fov, pixels):
     return pixels / (2 * math.tan(fov / 2))

@@ -21,8 +21,6 @@
 #  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 #  POSSIBILITY OF SUCH DAMAGE.
 
-import torch
-
 C0 = 0.28209479177387814
 C1 = 0.4886025119029199
 C2 = [
@@ -110,6 +108,7 @@ def eval_sh(deg, sh, dirs):
                             C4[7] * xz * (xx - 3 * yy) * sh[..., 23] +
                             C4[8] * (xx * (xx - 3 * yy) - yy * (3 * xx - yy)) * sh[..., 24])
     return result
+
 
 def RGB2SH(rgb):
     return (rgb - 0.5) / C0
