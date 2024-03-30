@@ -16,4 +16,5 @@ pip install plyfile
 REM open VS 20xx x64 Native Command Prompt
 SET DISTUTILS_USE_SDK=1
 pip install submodules/diff-gaussian-rasterization
+pip install submodules/diff-gaussian-rasterization-kahsolt
 pip install submodules/simple-knn
