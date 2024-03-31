@@ -91,6 +91,8 @@ class Scene:
 
         if os.path.exists(os.path.join(args.source_path, 'sparse')):
             scene_info = SCENE_DATA_LOADERS['Colmap'](args.source_path, args.images, args.eval)
+        elif os.path.exists(os.path.join(args.source_path, 'dense', 'sparse')):
+            scene_info = SCENE_DATA_LOADERS['ColmapExt'](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, 'transforms_train.json')):
             print('Found transforms_train.json file, assuming Blender data set!')
             scene_info = SCENE_DATA_LOADERS['Blender'](args.source_path, args.white_background, args.eval)

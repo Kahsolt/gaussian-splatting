@@ -216,6 +216,68 @@ def readColmapSceneInfo(path:str, images:str, eval:bool, llffhold:int=8) -> Scen
     return SceneInfo(pcd, train_cam_infos, test_cam_infos, nerf_normalization, ply_path)
 
 
+def readColmapExtSceneInfo(path:str, images:str, eval:bool):
+    path_base = os.path.join(path, 'dense', 'sparse')
+
+    # Step 1. Load files in the tsv first (split to train and test later)
+    tsv = glob.glob(os.path.join(path, '*.tsv'))[0]
+    files = pd.read_csv(tsv, sep='\t')
+    files = files[~files['id'].isnull()] # remove data without id
+    files.reset_index(inplace=True, drop=True)
+
+    # Step 2. load image paths
+    # Attention! The 'id' column in the tsv is BROKEN, don't use it!!!!
+    # Instead, read the id from images.bin using image file name!
+    cam_extrinsics = read_extrinsics_binary(os.path.join(path_base, 'images.bin'))
+    img_path_to_id = {}
+    for v in cam_extrinsics.values():
+        img_path_to_id[v.name] = v.id
+    img_ids = []
+    image_paths = []
+    id_name_pairs = {}
+    for filename in list(files['filename']):
+        id_ = img_path_to_id[filename]
+        image_paths += [filename]
+        id_name_pairs[id_] = filename
+        img_ids += [id_]
+
+    # Step 3. Load camera intrinsics
+    cam_intrinsics = read_intrinsics_binary(os.path.join(path_base, 'cameras.bin'))
+    reading_dir = "images" if images == None else images
+    cam_infos = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, 'dense', reading_dir))
+    cam_infos = [c for c in cam_infos if str(c.image_name) + '.jpg' in image_paths]
+
+    if eval:
+        img_ids_train   = [id_ for i, id_ in enumerate(img_ids) if files.loc[i, 'split'] == 'train']
+        img_ids_test    = [id_ for i, id_ in enumerate(img_ids) if files.loc[i, 'split'] == 'test']
+        img_names_train = [name for id, name in id_name_pairs.items() if id in img_ids_train]
+        img_names_test  = [name for id, name in id_name_pairs.items() if id in img_ids_test]  
+        train_cam_infos = [c for c in cam_infos if str(c.image_name)+'.jpg' in img_names_train]
+        test_cam_infos  = [c for c in cam_infos if str(c.image_name)+'.jpg' in img_names_test]
+    else:
+        train_cam_infos = cam_infos
+        test_cam_infos  = []
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    ply_path = os.path.join(path_base, 'points3D.ply')
+    bin_path = os.path.join(path_base, 'points3D.bin')
+    txt_path = os.path.join(path_base, 'points3D.txt')
+    if not os.path.exists(ply_path):
+        print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
+        try:
+            xyz, rgb, _ = read_points3D_binary(bin_path)
+        except:
+            xyz, rgb, _ = read_points3D_text(txt_path)
+        storePly(ply_path, xyz, rgb)
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+
+    return SceneInfo(pcd, train_cam_infos, test_cam_infos, nerf_normalization, ply_path)
+
+
 def readCamerasFromTransforms(path, transformsfile, white_background, extension='.png') -> List[CameraInfo]:
     cam_infos = []
     with open(os.path.join(path, transformsfile)) as json_file:
@@ -290,5 +352,6 @@ def readNerfSyntheticInfo(path:str, white_background:bool, eval:bool, extension:
 
 SCENE_DATA_LOADERS: Dict[str, Callable[..., SceneInfo]] = {
     'Colmap': readColmapSceneInfo,
+    'ColmapExt': readColmapExtSceneInfo,
     'Blender': readNerfSyntheticInfo,
 }
