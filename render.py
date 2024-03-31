@@ -12,6 +12,7 @@
 import os
 from tqdm import tqdm
 from argparse import ArgumentParser
+from typing import List
 
 import torch
 from torchvision.utils import save_image
@@ -19,12 +20,13 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 from modules.arguments import ModelParams, PipelineParams, get_combined_args
-from modules.scene import Scene, GaussianModel, render, DGR_PROVIDER, ImageState
+from modules.scene import Scene, Camera, GaussianModel, render, DGR_PROVIDER, ImageState
 from modules.utils.general_utils import safe_state
 
 
-def render_set(model_path, name, iteration, views, gaussians:GaussianModel, pipeline, background):
-    base_path = os.path.join(model_path, name, f'ours_{iteration}')
+@torch.no_grad()
+def render_set(scene:Scene, name:str, pipeline:PipelineParams):
+    base_path = os.path.join(scene.model_path, name, f'ours_{scene.load_iter}')
 
     render_path = os.path.join(base_path, 'renders')
     gts_path = os.path.join(base_path, 'gt')
@@ -45,10 +47,12 @@ def render_set(model_path, name, iteration, views, gaussians:GaussianModel, pipe
         os.makedirs(depth_path, exist_ok=True)
         os.makedirs(weight_path, exist_ok=True)
 
+    gaussians: GaussianModel = scene.gaussians
+    views: List[Camera] = getattr(scene, f'get_{name}_cameras')()
     for idx, view in enumerate(tqdm(views, desc='Rendering progress')):
-        render_results = render(view, gaussians, pipeline, background)
+        render_results = render(view, gaussians, pipeline, scene.background)
         rendering = render_results['render']
-        gt = view.original_image[0:3, :, :]
+        gt = view.image[0:3, :, :]
         save_image(rendering, os.path.join(render_path, f'{idx:05d}.png'))
         save_image(gt, os.path.join(gts_path, f'{idx:05d}.png'))
 
@@ -66,20 +70,6 @@ def render_set(model_path, name, iteration, views, gaussians:GaussianModel, pipe
             save_image(render_results['weight_map'], os.path.join(weight_path, f'{idx:05d}.png'))
 
 
-@torch.no_grad()
-def render_sets(dataset: ModelParams, iteration: int, pipeline: PipelineParams, skip_train: bool, skip_test: bool):
-    gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
-
-    bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
-    background = torch.tensor(bg_color, dtype=torch.float32, device='cuda')
-
-    if not skip_train:
-        render_set(dataset.model_path, 'train', scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
-    if not skip_test:
-        render_set(dataset.model_path, 'test', scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
-
-
 if __name__ == '__main__':
     parser = ArgumentParser(description='Testing script parameters')
     model = ModelParams(parser, sentinel=True)
@@ -94,4 +84,8 @@ if __name__ == '__main__':
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
+    mp = model.extract(args)
+    pp = pipeline.extract(args)
+    scene = Scene(mp, load_iter=args.iteration)
+    if not args.skip_train: render_set(scene, 'train', pp)
+    if not args.skip_test: render_set(scene, 'test', pp)

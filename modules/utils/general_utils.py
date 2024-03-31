@@ -18,7 +18,7 @@ import numpy as np
 
 
 def safe_state(silent:bool):
-    old_f = sys.stdout
+    _stdout = sys.stdout
 
     class F:
         def __init__(self, silent):
@@ -26,11 +26,11 @@ def safe_state(silent:bool):
         def write(self, x:str):
             if not self.silent:
                 if x.endswith('\n'):
-                    old_f.write(x.replace('\n', f" [{datetime.now().strftime('%d/%m %H:%M:%S')}]\n"))
+                    _stdout.write(x.replace('\n', f" [{datetime.now().strftime('%d/%m %H:%M:%S')}]\n"))
                 else:
-                    old_f.write(x)
+                    _stdout.write(x)
         def flush(self):
-            old_f.flush()
+            _stdout.flush()
 
     sys.stdout = F(silent)
 

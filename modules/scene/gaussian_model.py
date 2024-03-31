@@ -11,12 +11,14 @@
 
 import os
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Callable, Any
 
 import torch
-from torch import nn
-from torch import Tensor
+import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
+from torch.nn import Parameter
+from torch.optim import Optimizer
 from plyfile import PlyData, PlyElement, PlyProperty
 from simple_knn._C import distCUDA2
 
@@ -116,22 +118,26 @@ def get_expon_lr_func(lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, ma
 
 class GaussianModel:
 
-    def __init__(self, sh_degree:int=3):
-        self._xyz           = torch.empty(0)
-        self._scaling       = torch.empty(0)
-        self._rotation      = torch.empty(0)
-        self._features_dc   = torch.empty(0)
-        self._features_rest = torch.empty(0)
-        self._opacity       = torch.empty(0)
-        self._importance    = torch.empty(0)
-        self.max_radii2D    = torch.empty(0)
-        self.xyz_grad_accum = torch.empty(0)
-        self.xyz_grad_count = torch.empty(0)
-        self.optimizer        = None
-        self.max_sh_degree    = sh_degree
-        self.active_sh_degree = 0
-        self.percent_dense    = 0
-        self.spatial_lr_scale = 0
+    def __init__(self, max_sh_degree:int=3):
+        # props
+        self._xyz:           Parameter = None
+        self._scaling:       Parameter = None
+        self._rotation:      Parameter = None
+        self._features_dc:   Parameter = None
+        self._features_rest: Parameter = None
+        self._opacity:       Parameter = None
+        self._importance:    Parameter = None
+        # optim
+        self.optimizer:        Optimizer = None
+        self.xyz_scheduler:    Callable  = None
+        self.xyz_grad_accum:   Tensor    = None
+        self.xyz_grad_count:   Tensor    = None
+        self.max_radii2D:      Tensor    = None
+        self.max_sh_degree:    int       = max_sh_degree
+        self.cur_sh_degree:    int       = 0
+        self.percent_dense:    float     = 0.01
+        self.spatial_lr_scale: float     = 1.0
+
         self.setup_transform_functions()
 
     def setup_transform_functions(self):
@@ -143,51 +149,12 @@ class GaussianModel:
 
         self.scaling_activation = torch.exp
         self.scaling_inverse_activation = torch.log
-
-        self.covariance_activation = build_covariance_from_scaling_rotation
-
+        self.rotation_activation = F.normalize
         self.opacity_activation = torch.sigmoid
         self.opacity_inverse_activation = inverse_sigmoid
         self.importance_activation = torch.tanh
         self.importance_inverse_activation = torch.atanh
-
-        self.rotation_activation = F.normalize
-
-    def state_tuple(self) -> tuple:
-        return (
-            self._xyz,
-            self._scaling,
-            self._rotation,
-            self._features_dc,
-            self._features_rest,
-            self._opacity,
-            self._importance,
-            self.max_radii2D,
-            self.xyz_grad_accum,
-            self.xyz_grad_count,
-            self.optimizer.state_dict(),
-            self.active_sh_degree,
-            self.spatial_lr_scale,
-        )
-
-    def load_state_tuple(self, state_tuple:tuple, opt:OptimizationParams):
-        (
-            self._xyz,
-            self._scaling,
-            self._rotation,
-            self._features_dc,
-            self._features_rest,
-            self._opacity,
-            self._importance,
-            self.max_radii2D,
-            self.xyz_grad_accum,
-            self.xyz_grad_count,
-            optim_state_dict,
-            self.active_sh_degree,
-            self.spatial_lr_scale,
-        ) = state_tuple
-        self.training_setup(opt)
-        self.optimizer.load_state_dict(optim_state_dict)
+        self.covariance_activation = build_covariance_from_scaling_rotation
 
     @property
     def xyz(self):
@@ -218,9 +185,50 @@ class GaussianModel:
     def get_covariance(self, scaling_modifier:float=1):
         return self.covariance_activation(self.scaling, scaling_modifier, self._rotation)
 
-    def create_from_pcd(self, pcd:BasicPointCloud, spatial_lr_scale:float=1.0):
-        points = torch.from_numpy(np.asarray(pcd.points)).float().cuda()
-        colors = torch.from_numpy(np.asarray(pcd.colors)).float().cuda()
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            # props
+            '_xyz':             self._xyz,
+            '_scaling':         self._scaling,
+            '_rotation':        self._rotation,
+            '_features_dc':     self._features_dc,
+            '_features_rest':   self._features_rest,
+            '_opacity':         self._opacity,
+            '_importance':      self._importance,
+            # optim
+            'optimizer':        self.optimizer.state_dict(),
+            'xyz_grad_accum':   self.xyz_grad_accum,
+            'xyz_grad_count':   self.xyz_grad_count,
+            'max_radii2D':      self.max_radii2D,
+            'max_sh_degree':    self.max_sh_degree,
+            'cur_sh_degree':    self.cur_sh_degree,
+            'percent_dense':    self.percent_dense,
+            'spatial_lr_scale': self.spatial_lr_scale,
+        }
+
+    def load_state_dict(self, state_dict:Dict[str, Any], opt:OptimizationParams):
+        # load data first
+        self._xyz           = state_dict['_xyz']
+        self._scaling       = state_dict['_scaling']
+        self._rotation      = state_dict['_rotation']
+        self._features_dc   = state_dict['_features_dc']
+        self._features_rest = state_dict['_features_rest']
+        self._opacity       = state_dict['_opacity']
+        self._importance    = state_dict['_importance']
+        # then recover optim state
+        self.setup_training(opt)
+        self.optimizer.load_state_dict(state_dict['optimizer'])
+        self.xyz_grad_accum   = state_dict['xyz_grad_accum']
+        self.xyz_grad_count   = state_dict['xyz_grad_count']
+        self.max_radii2D      = state_dict['max_radii2D']
+        self.max_sh_degree    = state_dict['max_sh_degree']
+        self.cur_sh_degree    = state_dict['cur_sh_degree']
+        self.percent_dense    = state_dict['percent_dense']
+        self.spatial_lr_scale = state_dict['spatial_lr_scale']
+
+    def from_pcd(self, pcd:BasicPointCloud):
+        points = torch.from_numpy(np.asarray(pcd.points)).to(dtype=torch.float, device='cuda')
+        colors = torch.from_numpy(np.asarray(pcd.colors)).to(dtype=torch.float, device='cuda')
 
         if 'filter outliers by knn-dist':
             print('Number of points loaded:', points.shape[0])
@@ -243,10 +251,9 @@ class GaussianModel:
         scales = torch.log(torch.sqrt(dists))[...,None].repeat(1, 3)
         rots = torch.zeros((n_pts, 4), device='cuda')
         rots[:, 0] = 1
-        fused_color = RGB2SH(colors)
-        features = torch.zeros((n_pts, 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
-        features[:, :3, 0 ] = fused_color  # dc
-        features[:, 3:, 1:] = 0.0          # rest
+        features = torch.zeros((n_pts, 3, (self.max_sh_degree + 1) ** 2), dtype=torch.float, device='cuda')
+        features[:, :3, 0 ] = RGB2SH(colors)  # dc
+        features[:, 3:, 1:] = 0.0            # rest
         opacities = inverse_sigmoid(0.1 * torch.ones((n_pts, 1), dtype=torch.float, device='cuda'))
         importances = self.importance_inverse_activation(torch.zeros((n_pts, 1), dtype=torch.float, device='cuda'))
 
@@ -257,41 +264,6 @@ class GaussianModel:
         self._features_rest = nn.Parameter(features[:, :, 1: ].transpose(1, 2).contiguous(), requires_grad=True)
         self._opacity       = nn.Parameter(opacities,   requires_grad=True)
         self._importance    = nn.Parameter(importances, requires_grad=True)
-        self.max_radii2D = torch.zeros((self.xyz.shape[0]), device='cuda')
-
-        self.spatial_lr_scale = spatial_lr_scale
-
-    def save_ply(self, path:str):
-        def make_property_list():
-            l = ['x', 'y', 'z']
-            # All channels except the 3 DC
-            for i in range(self._scaling.shape[1]):
-                l.append(f'scale_{i}')
-            for i in range(self._rotation.shape[1]):
-                l.append(f'rot_{i}')
-            for i in range(self._features_dc.shape[1]*self._features_dc.shape[2]):
-                l.append(f'f_dc_{i}')
-            for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
-                l.append(f'f_rest_{i}')
-            l.append('opacity')
-            l.append('importance')
-            return l
-
-        xyz          = self._xyz          .detach().cpu().numpy()
-        scaling      = self._scaling      .detach().cpu().numpy()
-        rotation     = self._rotation     .detach().cpu().numpy()
-        feature_dc   = self._features_dc  .detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        feature_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities    = self._opacity      .detach().cpu().numpy()
-        importances  = self._importance   .detach().cpu().numpy()
-
-        dtype_full = [(prop, 'f4') for prop in make_property_list()]
-        vertexes = np.empty(xyz.shape[0], dtype=dtype_full)
-        properties = np.concatenate((xyz, scaling, rotation, feature_dc, feature_rest, opacities, importances), axis=1)
-        vertexes[:] = list(map(tuple, properties))
-        elem = PlyElement.describe(vertexes, 'vertex')
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        PlyData([elem]).write(path)
 
     def load_ply(self, path:str):
         plydata = PlyData.read(path)
@@ -339,22 +311,44 @@ class GaussianModel:
         opacities = np.asarray(elem['opacity'])[..., np.newaxis]
         importances = np.asarray(elem['importance'])[..., np.newaxis]
 
-        self._xyz           = nn.Parameter(torch.tensor(xyz,            dtype=torch.float, device='cuda').requires_grad_(True))
-        self._scaling       = nn.Parameter(torch.tensor(scales,         dtype=torch.float, device='cuda').requires_grad_(True))
-        self._rotation      = nn.Parameter(torch.tensor(rots,           dtype=torch.float, device='cuda').requires_grad_(True))
-        self._features_dc   = nn.Parameter(torch.tensor(features_dc,    dtype=torch.float, device='cuda').transpose(1, 2).contiguous().requires_grad_(True))
-        self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device='cuda').transpose(1, 2).contiguous().requires_grad_(True))
-        self._opacity       = nn.Parameter(torch.tensor(opacities,      dtype=torch.float, device='cuda').requires_grad_(True))
-        self._importance    = nn.Parameter(torch.tensor(importances,    dtype=torch.float, device='cuda').requires_grad_(True))
+        self._xyz           = nn.Parameter(torch.tensor(xyz,            dtype=torch.float, device='cuda'), requires_grad=True)
+        self._scaling       = nn.Parameter(torch.tensor(scales,         dtype=torch.float, device='cuda'), requires_grad=True)
+        self._rotation      = nn.Parameter(torch.tensor(rots,           dtype=torch.float, device='cuda'), requires_grad=True)
+        self._features_dc   = nn.Parameter(torch.tensor(features_dc,    dtype=torch.float, device='cuda').transpose(1, 2).contiguous(), requires_grad=True)
+        self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device='cuda').transpose(1, 2).contiguous(), requires_grad=True)
+        self._opacity       = nn.Parameter(torch.tensor(opacities,      dtype=torch.float, device='cuda'), requires_grad=True)
+        self._importance    = nn.Parameter(torch.tensor(importances,    dtype=torch.float, device='cuda'), requires_grad=True)
 
-        self.active_sh_degree = self.max_sh_degree
+        self.cur_sh_degree = self.max_sh_degree     # assume optimization completed
 
-    def training_setup(self, opt:OptimizationParams):
-        self.percent_dense = opt.percent_dense
-        self.xyz_grad_accum = torch.zeros((self.xyz.shape[0], 1), device='cuda')
-        self.xyz_grad_count = torch.zeros((self.xyz.shape[0], 1), device='cuda')
+    def save_ply(self, path:str):
+        xyz          = self._xyz          .detach().cpu().numpy()
+        scaling      = self._scaling      .detach().cpu().numpy()
+        rotation     = self._rotation     .detach().cpu().numpy()
+        feature_dc   = self._features_dc  .detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        feature_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        opacities    = self._opacity      .detach().cpu().numpy()
+        importances  = self._importance   .detach().cpu().numpy()
 
-        mods = [
+        property_names =  [
+            'x', 'y', 'z',
+            # All channels except the 3 DC
+            *[f'scale_{i}' for i in range(self._scaling.shape[1])],
+            *[f'rot_{i}' for i in range(self._rotation.shape[1])],
+            *[f'f_dc_{i}' for i in range(self._features_dc.shape[1]*self._features_dc.shape[2])],
+            *[f'f_rest_{i}' for i in range(self._features_rest.shape[1]*self._features_rest.shape[2])],
+            'opacity',
+            'importance',
+        ]
+        vertexes = np.empty(xyz.shape[0], dtype=[(prop, 'f4') for prop in property_names])
+        properties = np.concatenate((xyz, scaling, rotation, feature_dc, feature_rest, opacities, importances), axis=1)
+        vertexes[:] = list(map(tuple, properties))
+        elem = PlyElement.describe(vertexes, 'vertex')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        PlyData([elem]).write(path)
+
+    def setup_training(self, opt:OptimizationParams):
+        param_groups = [
             {'name': 'xyz',        'params': [self._xyz],           'lr': opt.position_lr_init * self.spatial_lr_scale},
             {'name': 'scaling',    'params': [self._scaling],       'lr': opt.scaling_lr},
             {'name': 'rotation',   'params': [self._rotation],      'lr': opt.rotation_lr},
@@ -363,19 +357,27 @@ class GaussianModel:
             {'name': 'opacity',    'params': [self._opacity],       'lr': opt.opacity_lr},
             {'name': 'importance', 'params': [self._importance],    'lr': opt.importance_lr},
         ]
-        self.optimizer = torch.optim.Adam(mods, lr=0.0, eps=1e-15)
-        self.xyz_scheduler_args = get_expon_lr_func(
+        self.optimizer = torch.optim.Adam(param_groups, lr=0.0, eps=1e-15)
+        self.xyz_scheduler = get_expon_lr_func(
             lr_init=opt.position_lr_init * self.spatial_lr_scale,
             lr_final=opt.position_lr_final * self.spatial_lr_scale,
             lr_delay_mult=opt.position_lr_delay_mult,
             max_steps=opt.position_lr_max_steps,
         )
+        self.xyz_grad_accum = torch.zeros((self.xyz.shape[0], 1), dtype=torch.float, device='cuda')
+        self.xyz_grad_count = torch.zeros((self.xyz.shape[0], 1), dtype=torch.int,   device='cuda')
+        self.max_radii2D    = torch.zeros((self.xyz.shape[0]),    dtype=torch.int,   device='cuda')
+        self.percent_dense = opt.percent_dense
+
+    def optimizer_step(self):
+        self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
 
     def update_learning_rate(self, steps:int):
         ''' Learning rate scheduling per step '''
         for param_group in self.optimizer.param_groups:
             if param_group['name'] == 'xyz':
-                lr = self.xyz_scheduler_args(steps)
+                lr = self.xyz_scheduler(steps)
                 param_group['lr'] = lr
                 # return lr
 
@@ -443,7 +445,7 @@ class GaussianModel:
 
         self.xyz_grad_accum = self.xyz_grad_accum[valid_points_mask]
         self.xyz_grad_count = self.xyz_grad_count[valid_points_mask]
-        self.max_radii2D = self.max_radii2D[valid_points_mask]
+        self.max_radii2D    = self.max_radii2D   [valid_points_mask]
 
     def densification_postfix(self, new_xyz:Tensor, new_scaling:Tensor, new_rotation:Tensor, new_features_dc:Tensor, new_features_rest:Tensor, new_opacities:Tensor, new_importances:Tensor):
         states = {
@@ -535,5 +537,5 @@ class GaussianModel:
         self._opacity = optimizable_tensors['opacity']
 
     def oneup_SH_degree(self):
-        if self.active_sh_degree < self.max_sh_degree:
-            self.active_sh_degree += 1
+        if self.cur_sh_degree < self.max_sh_degree:
+            self.cur_sh_degree += 1

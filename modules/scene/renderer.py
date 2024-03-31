@@ -64,30 +64,27 @@ class ImageState:
     def ranges(self): return self._ranges
 
 
-def render(vp_cam:Camera, pc:GaussianModel, pipe:PipelineParams, bg_color:Tensor, scaling_modifier:float=1.0, override_color=None):
+def render(vp_cam:Camera, pc:GaussianModel, pipe:PipelineParams, bg_color:Tensor, scaling_modifier:float=1.0, override_color:Tensor=None):
     ''' Background tensor (bg_color) must be on GPU! '''
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.xyz, dtype=pc.xyz.dtype, requires_grad=True, device='cuda') + 0
+    screenspace_points = torch.zeros_like(pc.xyz, dtype=pc.xyz.dtype, requires_grad=True, device='cuda')
     try:
         screenspace_points.retain_grad()
     except:
         pass
 
     # Set up rasterization configuration
-    tanfovx = math.tan(vp_cam.FoVx * 0.5)
-    tanfovy = math.tan(vp_cam.FoVy * 0.5)
-
     raster_settings = GaussianRasterizationSettings(
-        image_height=int(vp_cam.image_height),
-        image_width=int(vp_cam.image_width),
-        tanfovx=tanfovx,
-        tanfovy=tanfovy,
+        image_height=vp_cam.image_height,
+        image_width=vp_cam.image_width,
+        tanfovx=math.tan(vp_cam.FoVx * 0.5),
+        tanfovy=math.tan(vp_cam.FoVy * 0.5),
         bg=bg_color,
         scale_modifier=scaling_modifier,
         viewmatrix=vp_cam.world_view_transform,
         projmatrix=vp_cam.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
+        sh_degree=pc.cur_sh_degree,
         campos=vp_cam.camera_center,
         prefiltered=False,
         debug=pipe.debug
@@ -120,7 +117,7 @@ def render(vp_cam:Camera, pc:GaussianModel, pipe:PipelineParams, bg_color:Tensor
             shs_view = pc.features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
             dir_pp = (pc.xyz - vp_cam.camera_center.repeat(pc.features.shape[0], 1))
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-            sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
+            sh2rgb = eval_sh(pc.cur_sh_degree, shs_view, dir_pp_normalized)
             colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
         else:
             shs = pc.features
@@ -135,14 +132,14 @@ def render(vp_cam:Camera, pc:GaussianModel, pipe:PipelineParams, bg_color:Tensor
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
     rendered_image, radii, *extra_data = rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp,
+        means3D=means3D,
+        means2D=means2D,
+        shs=shs,
+        colors_precomp=colors_precomp,
+        opacities=opacity,
+        scales=scales,
+        rotations=rotations,
+        cov3D_precomp=cov3D_precomp,
         **extra_kwargs,
     )
 

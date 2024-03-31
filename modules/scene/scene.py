@@ -11,8 +11,8 @@
 
 import os
 import json
-import random
-from typing import Dict, Tuple
+import shutil
+from typing import List, Dict, Tuple, Any
 
 import torch
 from torch import Tensor
@@ -58,36 +58,24 @@ def load_camera(args:ModelParams, id:int, cam_info:CameraInfo, resolution_scale:
     resized_image_rgb = PILtoTorch(cam_info.image, resolution)
     gt_image = resized_image_rgb[:3, ...]
     loaded_mask = None
-
     if resized_image_rgb.shape[1] == 4:
         loaded_mask = resized_image_rgb[3:4, ...]
 
     return Camera(
-        colmap_id=cam_info.uid, 
-        R=cam_info.R, T=cam_info.T, 
-        FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
-        image=gt_image, gt_alpha_mask=loaded_mask,
-        image_name=cam_info.image_name, uid=id, 
-        data_device=args.data_device,
+        uid=id, colmap_id=cam_info.uid, 
+        R=cam_info.R, T=cam_info.T, FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
+        image=gt_image, mask=loaded_mask, image_name=cam_info.image_name, 
     )
 
 
 class Scene:
 
-    def __init__(self, args:ModelParams, gaussians:GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
-        self.model_path = args.model_path
-        self.loaded_iter = None
-        self.gaussians = gaussians
-
-        if load_iteration:
-            if load_iteration == -1:
-                self.loaded_iter = max([int(fname.split('_')[-1]) for fname in os.listdir(os.path.join(self.model_path, 'point_cloud'))])
-            else:
-                self.loaded_iter = load_iteration
-            print(f'Loading trained model at iteration {self.loaded_iter}')
-
+    def __init__(self, args:ModelParams, load_iter:int=None, resolution_scales:List[float]=[1.0]):
+        self.args = args
         self.train_cameras: Dict[int, Camera] = {}
         self.test_cameras:  Dict[int, Camera] = {}
+        self.gaussians = GaussianModel(args.sh_degree)
+        self.background = (torch.ones if args.white_background else torch.zeros)([3], dtype=torch.float, device='cuda')
 
         if os.path.exists(os.path.join(args.source_path, 'sparse')):
             scene_info = SCENE_DATA_LOADERS['Colmap'](args.source_path, args.images, args.eval)
@@ -97,40 +85,62 @@ class Scene:
             print('Found transforms_train.json file, assuming Blender data set!')
             scene_info = SCENE_DATA_LOADERS['Blender'](args.source_path, args.white_background, args.eval)
         else:
-            assert False, 'Could not recognize scene type!'
-
-        if not self.loaded_iter:
-            with open(scene_info.ply_path, 'rb') as fh_in, open(os.path.join(self.model_path, 'input.ply') , 'wb') as fh_out:
-                fh_out.write(fh_in.read())
-            json_cams = [cam.to_json(id) for id, cam in enumerate(scene_info.test_cameras + scene_info.train_cameras)]
-            with open(os.path.join(self.model_path, 'cameras.json'), 'w') as fh:
-                json.dump(json_cams, fh, indent=2, ensure_ascii=False)
-
-        if shuffle:
-            # Multi-res consistent random shuffling
-            random.shuffle(scene_info.train_cameras)
-            random.shuffle(scene_info.test_cameras)
+            raise TypeError(f'Could not recognize scene type for dataset {args.source_path}')
 
         self.cameras_extent: float = scene_info.nerf_normalization['radius']
+        print('>> cameras_extent:', self.cameras_extent)
+        self.gaussians.spatial_lr_scale = self.cameras_extent   # FIXME: not elegant
 
-        for resolution_scale in resolution_scales:
-            print('Loading Training Cameras')
-            self.train_cameras[resolution_scale] = [load_camera(args, id, cam, resolution_scale) for id, cam in enumerate(scene_info.train_cameras)]
+        for res in resolution_scales:
+            print('Loading Train Cameras')
+            self.train_cameras[res] = [load_camera(args, id, cam, res) for id, cam in enumerate(scene_info.train_cameras)]
             print('Loading Test Cameras')
-            self.test_cameras[resolution_scale] = [load_camera(args, id, cam, resolution_scale) for id, cam in enumerate(scene_info.test_cameras)]
+            self.test_cameras[res] = [load_camera(args, id, cam, res) for id, cam in enumerate(scene_info.test_cameras)]
 
-        if self.loaded_iter:
-            print('>> [init] via load_ply')
-            self.gaussians.load_ply(os.path.join(self.model_path, 'point_cloud', 'iteration_' + str(self.loaded_iter), 'point_cloud.ply'))
+        if load_iter is not None and load_iter < 0:
+            try:
+                load_iter = max([int(fn.split('_')[-1]) for fn in os.listdir(os.path.join(self.model_path, 'point_cloud'))])
+            except:
+                print('>> not found saved point_cloud.ply')
+                load_iter = None
+        self.load_iter = load_iter
+        if load_iter is None:
+            shutil.copyfile(scene_info.ply_path, os.path.join(self.model_path, 'input.ply'))
+            cam_infos = [cam.to_json(id) for id, cam in enumerate(scene_info.train_cameras + scene_info.test_cameras)]
+            with open(os.path.join(self.model_path, 'cameras.json'), 'w') as fh:
+                json.dump(cam_infos, fh, indent=2, ensure_ascii=False)
+            print('>> [gaussian] init via from_pcd')
+            self.gaussians.from_pcd(scene_info.point_cloud)
         else:
-            print('>> [init] via create_from_pcd')
-            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            print(f'>> [gaussian] init via load_ply at iteration-{load_iter}')
+            self.load_gaussian(load_iter)
 
-    def getTrainCameras(self, scale:float=1.0):
+    @property
+    def model_path(self) -> str: return self.args.model_path
+
+    @classmethod
+    def random_background(cls) -> Tensor:
+        return torch.rand([3], dtype=torch.float, device='cuda')
+
+    def get_train_cameras(self, scale:float=1.0):
         return self.train_cameras[scale]
 
-    def getTestCameras(self, scale:float=1.0):
+    def get_test_cameras(self, scale:float=1.0):
         return self.test_cameras[scale]
 
-    def save(self, steps:int):
+    def save_gaussian(self, steps:int):
         self.gaussians.save_ply(os.path.join(self.model_path, 'point_cloud', f'iteration_{steps}', 'point_cloud.ply'))
+
+    def load_gaussian(self, steps:int):
+        self.gaussians.load_ply(os.path.join(self.model_path, 'point_cloud', f'iteration_{steps}', 'point_cloud.ply'))
+
+    def save_checkpoint(self, steps:int):
+        state_dict = self.gaussians.state_dict()
+        state_dict['steps'] = steps
+        torch.save(state_dict, os.path.join(self.model_path, f'ckpt-{steps}.pth'))
+
+    def load_checkpoint(self, path:str) -> int:
+        state_dict: Dict[str, Any] = torch.load(path)
+        steps = state_dict.get('steps', 0)
+        self.gaussians.load_state_dict(state_dict)
+        return steps
