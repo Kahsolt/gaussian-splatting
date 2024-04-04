@@ -9,27 +9,22 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-DGR_PROVIDER = 'ours'
-
 import math
 from typing import Tuple
 
 import torch
 from torch import Tensor
 
-if DGR_PROVIDER == 'original':
-    from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
-elif DGR_PROVIDER == 'depth':
-    from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
-elif DGR_PROVIDER == 'ours':
-    from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
-elif DGR_PROVIDER == 'ours-dev':
-    from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
-print('>> DGR_PROVIDER:', DGR_PROVIDER)
-
 from modules.arguments import PipelineParams
 from modules.scene import Camera, GaussianModel
 from modules.utils.sh_utils import eval_sh
+
+ENGINE_PROVIDERS = [
+    'original',
+    'depth',
+    'ours',
+    'ours-dev',
+]
 
 
 class ImageState:
@@ -73,6 +68,17 @@ def render(vp_cam:Camera, pc:GaussianModel, pipe:PipelineParams, bg_color:Tensor
         screenspace_points.retain_grad()
     except:
         pass
+
+    if pipe.engine_provider == 'original':
+        from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+    elif pipe.engine_provider == 'depth':
+        from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
+    elif pipe.engine_provider == 'ours':
+        from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
+    elif pipe.engine_provider == 'ours-dev':
+        from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
+    else:
+        raise ValueError(f'>> unknown rasterizer engine: {pipe.engine_provider}, please choose from {ENGINE_PROVIDERS}')
 
     # Set up rasterization configuration
     raster_settings = GaussianRasterizationSettings(
@@ -125,7 +131,7 @@ def render(vp_cam:Camera, pc:GaussianModel, pipe:PipelineParams, bg_color:Tensor
         colors_precomp = override_color
 
     extra_kwargs = {}
-    if DGR_PROVIDER == 'ours':
+    if pipe.engine_provider == 'ours':
         extra_kwargs = {
             'importances': importance,
         }
@@ -143,15 +149,15 @@ def render(vp_cam:Camera, pc:GaussianModel, pipe:PipelineParams, bg_color:Tensor
         **extra_kwargs,
     )
 
-    if DGR_PROVIDER == 'ours':
+    if pipe.engine_provider == 'ours':
         tmp = extra_data[0]
         importance_map = radii
         radii = tmp
-    elif DGR_PROVIDER == 'ours-dev':
+    elif pipe.engine_provider == 'ours-dev':
         imgBuffer = extra_data[0]
         img_state = ImageState(imgBuffer, (raster_settings.image_height, raster_settings.image_width))
         n_contrib = extra_data[1]
-    elif DGR_PROVIDER == 'depth':
+    elif pipe.engine_provider == 'depth':
         depth_map = extra_data[0]
         weight_map = extra_data[1]
 

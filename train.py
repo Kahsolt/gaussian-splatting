@@ -12,6 +12,7 @@
 import os
 import sys
 import json
+from pathlib import Path
 from random import shuffle
 from datetime import datetime
 from argparse import ArgumentParser, Namespace
@@ -24,7 +25,7 @@ from tqdm import tqdm
 from modules.arguments import ModelParams, PipelineParams, OptimizationParams
 from modules.scene import Scene, Camera, GaussianModel, render
 from modules import network_gui
-from modules.utils.loss_utils import l1_loss, ssim, psnr
+from modules.utils.loss_utils import l1_loss, ssim, psnr, nerfw_loss
 from modules.utils.general_utils import safe_state
 
 TENSORBOARD_FOUND = False
@@ -52,7 +53,7 @@ def init_log_summary(args:Namespace, mp:ModelParams, pp:PipelineParams, op:Optim
     if not mp.model_path:
         exp_name = os.getenv('OAR_JOB_ID')
         if exp_name is None:
-            exp_name = str(datetime.now()).replace(' ', 'T').replace(':', '-')
+            exp_name = str(datetime.now()).replace(' ', 'T').replace(':', '-') + '_' +  Path(mp.source_path).stem
         mp.model_path = os.path.join('output', exp_name)
 
     print(f'>> Output folder: {mp.model_path}')
@@ -192,10 +193,12 @@ def train(args:Namespace, mp:ModelParams, pp:PipelineParams, op:OptimizationPara
 
         # Loss
         gt_image = viewpoint_cam.image.cuda()
-        Ll1 = l1_loss(image, gt_image, reduction='none') * loss_mask
-        Lssim = ssim(image, gt_image, reduction='none') * loss_mask
-        loss: Tensor = (1.0 - op.lambda_dssim) * Ll1 + op.lambda_dssim * (1.0 - Lssim)
-        if loss.numel() > 1: loss = loss.mean()
+        if op.nerfw_loss:
+            loss = nerfw_loss(image, gt_image, loss_mask)
+        else:
+            Ll1 = l1_loss(image, gt_image, reduction='none') * loss_mask
+            Lssim = ssim(image, gt_image, reduction='none') * loss_mask
+            loss: Tensor = (1.0 - op.lambda_dssim) * Ll1.mean() + op.lambda_dssim * (1.0 - Lssim.mean())
         loss.backward()
 
         ts_end.record()

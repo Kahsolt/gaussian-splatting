@@ -226,11 +226,11 @@ class GaussianModel:
         self.percent_dense    = state_dict['percent_dense']
         self.spatial_lr_scale = state_dict['spatial_lr_scale']
 
-    def from_pcd(self, pcd:BasicPointCloud):
+    def from_pcd(self, pcd:BasicPointCloud, sanitize:bool=False):
         points = torch.from_numpy(np.asarray(pcd.points)).to(dtype=torch.float, device='cuda')
         colors = torch.from_numpy(np.asarray(pcd.colors)).to(dtype=torch.float, device='cuda')
 
-        if 'filter outliers by knn-dist':
+        if sanitize:
             print('Number of points loaded:', points.shape[0])
 
             # 每个点到最近三个邻居的平均距离的平方
@@ -265,13 +265,13 @@ class GaussianModel:
         self._opacity       = nn.Parameter(opacities,   requires_grad=True)
         self._importance    = nn.Parameter(importances, requires_grad=True)
 
-    def load_ply(self, path:str):
+    def load_ply(self, path:str, sanitize:bool=False):
         plydata = PlyData.read(path)
         elem: PlyElement = plydata.elements[0]
         properties: List[PlyProperty] = elem.properties
         sort_fn = lambda x: int(x.split('_')[-1])
 
-        if 'filter by importance':
+        if sanitize:
             importances = np.asarray(elem['importance'])
 
             if not 'show':
@@ -513,6 +513,14 @@ class GaussianModel:
 
     def densify_and_prune(self, max_grad:float, min_opacity:float, extent:float, max_screen_size:int):
         grads = self.xyz_grad_accum / self.xyz_grad_count
+        if os.getenv('DEBUG_GRAD'):
+            with torch.no_grad():
+                has_grad = ~grads.isnan()
+                has_grad_cnt = has_grad.sum()
+                fixed_grads = grads.clone()
+                fixed_grads[~has_grad] = 0.0
+                print(f'[has_grad] {has_grad_cnt} / {grads.numel()} = {has_grad_cnt / grads.numel()}')
+                print(f'[abs(grad)] max: {fixed_grads.max()}, mean: {fixed_grads.sum() / has_grad_cnt}')
         grads[grads.isnan()] = 0.0
 
         self.densify_and_clone(grads, max_grad, extent)

@@ -110,7 +110,7 @@ class Scene:
             with open(os.path.join(self.model_path, 'cameras.json'), 'w') as fh:
                 json.dump(cam_infos, fh, indent=2, ensure_ascii=False)
             print('>> [gaussian] init via from_pcd')
-            self.gaussians.from_pcd(scene_info.point_cloud)
+            self.gaussians.from_pcd(scene_info.point_cloud, args.sanitize_init_pcd)
         else:
             print(f'>> [gaussian] init via load_ply at iteration-{load_iter}')
             self.load_gaussian(load_iter)
@@ -132,7 +132,7 @@ class Scene:
         self.gaussians.save_ply(os.path.join(self.model_path, 'point_cloud', f'iteration_{steps}', 'point_cloud.ply'))
 
     def load_gaussian(self, steps:int):
-        self.gaussians.load_ply(os.path.join(self.model_path, 'point_cloud', f'iteration_{steps}', 'point_cloud.ply'))
+        self.gaussians.load_ply(os.path.join(self.model_path, 'point_cloud', f'iteration_{steps}', 'point_cloud.ply'), self.args.sanitize_load_guass)
 
     def save_checkpoint(self, steps:int):
         state_dict = self.gaussians.state_dict()

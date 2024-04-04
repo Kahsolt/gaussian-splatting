@@ -58,6 +58,9 @@ class ModelParams(ParamGroup):
         self._resolution = -1
         self._white_background = False
         self.eval = False
+        # ↓↓↓ new add
+        self.sanitize_init_pcd = False
+        self.sanitize_load_guass = False
         super().__init__(parser, 'Loading Parameters', sentinel)
 
     def extract(self, args):
@@ -72,6 +75,8 @@ class PipelineParams(ParamGroup):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
         self.debug = False
+        # ↓↓↓ new add
+        self.engine_provider = 'ours'
         super().__init__(parser, 'Pipeline Parameters')
 
 
@@ -96,11 +101,12 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
-        # ↓↓↓ modified
+        # ↓↓↓ new add
         self.m_loss_weight = False
         self.m_loss_depth = False
         self.m_loss_depth_reverse = False
         self.m_loss_importance = False
+        self.nerfw_loss = False
         super().__init__(parser, 'Optimization Parameters')
 
 
