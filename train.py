@@ -26,7 +26,7 @@ from modules.arguments import ModelParams, PipelineParams, OptimizationParams
 from modules.scene import Scene, Camera, GaussianModel, render
 from modules import network_gui
 from modules.utils.loss_utils import l1_loss, ssim, psnr, nerfw_loss
-from modules.utils.general_utils import safe_state
+from modules.utils.general_utils import safe_state, NoSummaryWriter
 
 TENSORBOARD_FOUND = False
 try:
@@ -36,19 +36,13 @@ try:
         from tensorboardX import SummaryWriter
         TENSORBOARD_FOUND = True
     except ImportError: pass
-except ImportError:
-    class SummaryWriter:
-        def __init__(self, *args, **kwargs): pass
-        def add_scalar(self, *args, **kwargs): pass
-        def add_scalars(self, *args, **kwargs): pass
-        def add_tensor(self, *args, **kwargs): pass
-        def add_histogram(self, *args, **kwargs): pass
-        def add_image(self, *args, **kwargs): pass
-        def add_images(self, *args, **kwargs): pass
-        def add_figure(self, *args, **kwargs): pass
+except ImportError: pass
 
 
 def init_log_summary(args:Namespace, mp:ModelParams, pp:PipelineParams, op:OptimizationParams) -> SummaryWriter:
+    # Ignore logging ?
+    if args.nolog: return NoSummaryWriter()
+
     # Set up output folder
     if not mp.model_path:
         exp_name = os.getenv('OAR_JOB_ID')
@@ -73,6 +67,7 @@ def init_log_summary(args:Namespace, mp:ModelParams, pp:PipelineParams, op:Optim
     # Create Tensorboard writer
     if not TENSORBOARD_FOUND:
         print('>> [warn] Tensorboard not available, ignore SummaryWriter progress')
+        return NoSummaryWriter()
     return SummaryWriter(mp.model_path)
 
 
@@ -104,8 +99,8 @@ def add_log_summary_test_step(sw:SummaryWriter, steps:int, test_steps:List[int],
         psnr_test /= total
         print(f"\n[ITER {steps}] Evaluating {config['name']}: L1 {l1_test}, PSNR {psnr_test}")
 
-        sw.add_scalar(config['name'] + 'l1', l1_test, global_step=steps)
-        sw.add_scalar(config['name'] + 'psnr', psnr_test, global_step=steps)
+        sw.add_scalar(config['name'] + '/l1', l1_test, global_step=steps)
+        sw.add_scalar(config['name'] + '/psnr', psnr_test, global_step=steps)
 
 
 def render_network_gui(pipe:PipelineParams, opt:OptimizationParams, scene:Scene, steps:int):
@@ -137,8 +132,9 @@ def train(args:Namespace, mp:ModelParams, pp:PipelineParams, op:OptimizationPara
     scene = Scene(mp)
     gaussians: GaussianModel = scene.gaussians
     gaussians.setup_training(op)
-    if args.start_checkpoint:
-        start_steps = scene.load_checkpoint(args.start_checkpoint)
+    if args.load:
+        start_steps = scene.load_checkpoint(args.load)
+    gaussians.cuda()
 
     ''' Train '''
     viewpoint_stack: List[Camera] = None
@@ -257,10 +253,11 @@ if __name__ == '__main__':
     parser.add_argument('--test_iterations', nargs='+', type=int, default=[7_000, 30_000])
     parser.add_argument('--save_iterations', nargs='+', type=int, default=[7_000, 30_000])
     parser.add_argument('--checkpoint_iterations', nargs='+', type=int, default=[7_000, 30_000])
-    parser.add_argument('--start_checkpoint', type=str)
+    parser.add_argument('--load', type=str, help='resume from checkpoint')
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true')
-    parser.add_argument('--quiet', action='store_true')
+    parser.add_argument('--quiet', action='store_true', help='no console log')
+    parser.add_argument('--nolog', action='store_true', help='no logdir, for fast dev')
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     print('Hparams:', vars(args))

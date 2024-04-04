@@ -38,3 +38,14 @@ def safe_state(silent:bool):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device('cuda:0'))
+
+
+class NoSummaryWriter:
+    def __init__(self, *args, **kwargs): pass
+    def add_scalar(self, *args, **kwargs): pass
+    def add_scalars(self, *args, **kwargs): pass
+    def add_tensor(self, *args, **kwargs): pass
+    def add_histogram(self, *args, **kwargs): pass
+    def add_image(self, *args, **kwargs): pass
+    def add_images(self, *args, **kwargs): pass
+    def add_figure(self, *args, **kwargs): pass

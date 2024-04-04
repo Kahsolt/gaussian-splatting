@@ -22,7 +22,8 @@ from torch.optim import Optimizer
 from plyfile import PlyData, PlyElement, PlyProperty
 from simple_knn._C import distCUDA2
 
-from modules.arguments import OptimizationParams
+from modules.arguments import ModelParams, OptimizationParams
+from modules.scene import Camera
 from modules.data import BasicPointCloud
 from modules.utils.sh_utils import RGB2SH
 
@@ -116,9 +117,11 @@ def get_expon_lr_func(lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, ma
     return helper
 
 
-class GaussianModel:
+class GaussianModel(nn.Module):
 
-    def __init__(self, max_sh_degree:int=3):
+    def __init__(self, mp:ModelParams):
+        super().__init__()
+
         # props
         self._xyz:           Parameter = None
         self._scaling:       Parameter = None
@@ -133,12 +136,82 @@ class GaussianModel:
         self.xyz_grad_accum:   Tensor    = None
         self.xyz_grad_count:   Tensor    = None
         self.max_radii2D:      Tensor    = None
-        self.max_sh_degree:    int       = max_sh_degree
+        self.max_sh_degree:    int       = mp.sh_degree
         self.cur_sh_degree:    int       = 0
         self.percent_dense:    float     = 0.01
         self.spatial_lr_scale: float     = 1.0
 
+        self.mp = mp
         self.setup_transform_functions()
+
+        # ↓↓↓ new add neural decoder (from bhy)
+        self.embedding_appearance: nn.Embedding = nn.Identity()    # dummy
+        self.embedding_occlusion: nn.Embedding = nn.Identity()
+
+        if mp.use_view_emb:
+            self.mlp_view = nn.Sequential(
+                nn.Linear(4, mp.view_emb_dim), 
+            )
+            view_emb_dim = mp.view_emb_dim
+        else:
+            self.mlp_view = nn.Identity()
+            view_emb_dim = 4
+        view_emb_dim = 0        # tmp force ignore
+
+        self.color_mlp_in_dim = mp.sh_feat_dim + view_emb_dim + (mp.appearance_dim if mp.add_view_emb_to_color else 0)
+        self.mlp_color = nn.Sequential(
+            nn.Linear(self.color_mlp_in_dim, mp.feat_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(mp.feat_dim, 3),
+            nn.Sigmoid(),
+        )
+
+        self.occlu_mlp_in_dim = mp.sh_feat_dim + view_emb_dim + (mp.occlusion_dim if mp.add_view_emb_to_occlu else 0)
+        self.mlp_occlu = nn.Sequential(
+            nn.Linear(self.occlu_mlp_in_dim, mp.feat_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(mp.feat_dim, 1),
+            nn.Softplus(),
+        )
+
+    def feature_encode(self, vp_cam:Camera, visible_mask:Tensor=None):
+        ## view frustum filtering for acceleration    
+        if visible_mask is None: visible_mask = slice(None)
+
+        pts = self.xyz[visible_mask]                        # (N, 3)
+        feat = self.features[visible_mask].flatten(1)       # (N, 16*3)
+
+        if not 'bind view':
+            ob_view = pts - vp_cam.camera_center                # (N, 3)
+            ob_dist = ob_view.norm(dim=1, keepdim=True)         # (N, 1)
+            ob_view = ob_view / ob_dist                         # (N, 3)
+            ob_dist = torch.log(ob_dist)
+            cat_view = torch.cat([ob_view, ob_dist], dim=1)     # (N, 4)
+
+        # encode view
+        mp = self.mp
+        if mp.use_view_emb:
+            cat_view = self.mlp_view(cat_view)      # (N, 16), vrng R
+
+        # predict colors
+        #cat_color_feat = torch.cat([feat, cat_view], -1)    # (N, 48)
+        cat_color_feat = feat
+        if mp.add_view_emb_to_color:
+            camera_indicies = torch.ones_like(cat_view[:, 0], dtype=torch.long) * vp_cam.uid
+            appearance = self.embedding_appearance(camera_indicies)
+            cat_color_feat = torch.cat([cat_color_feat, appearance], -1)    # (N, 80)
+        colors = self.mlp_color(cat_color_feat)   # (N, 3), vrng [0, 1]
+
+        # predict occlus
+        #cat_occlu_feat = torch.cat([feat, cat_view], -1)    # (N, 16)
+        cat_occlu_feat = feat
+        if mp.add_view_emb_to_occlu:
+            camera_indicies = torch.ones_like(cat_view[:, 0], dtype=torch.long) * vp_cam.uid
+            occlusion = self.embedding_occlusion(camera_indicies)
+            cat_occlu_feat = torch.cat([cat_occlu_feat, occlusion], -1)    # (N, 80)
+        occlus = self.mlp_occlu(cat_occlu_feat)   # (N, 1), vrng [0, inf]
+
+        return colors, occlus
 
     def setup_transform_functions(self):
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
@@ -169,7 +242,7 @@ class GaussianModel:
         return self.rotation_activation(self._rotation)
 
     @property
-    def features(self): # colors
+    def features(self):  # colors, [N, D=16, C=3] for SH_deg=3
         features_dc = self._features_dc
         features_rest = self._features_rest
         return torch.cat((features_dc, features_rest), dim=1)

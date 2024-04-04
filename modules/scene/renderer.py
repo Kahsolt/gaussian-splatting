@@ -118,17 +118,23 @@ def render(vp_cam:Camera, pc:GaussianModel, pipe:PipelineParams, bg_color:Tensor
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
     shs = None
     colors_precomp = None
-    if override_color is None:
-        if pipe.convert_SHs_python:
-            shs_view = pc.features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
-            dir_pp = (pc.xyz - vp_cam.camera_center.repeat(pc.features.shape[0], 1))
-            dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-            sh2rgb = eval_sh(pc.cur_sh_degree, shs_view, dir_pp_normalized)
-            colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
-        else:
-            shs = pc.features
+    if pc.mp.use_neural_decoder:
+        #visible_mask = rasterizer.markVisible(positions=means3D)
+        visible_mask = None
+        colors, occlusions = pc.feature_encode(vp_cam, visible_mask)
+        colors_precomp = colors
     else:
-        colors_precomp = override_color
+        if override_color is None:
+            if pipe.convert_SHs_python:
+                shs_view = pc.features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
+                dir_pp = (pc.xyz - vp_cam.camera_center.repeat(pc.features.shape[0], 1))
+                dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
+                sh2rgb = eval_sh(pc.cur_sh_degree, shs_view, dir_pp_normalized)
+                colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
+            else:
+                shs = pc.features
+        else:
+            colors_precomp = override_color
 
     extra_kwargs = {}
     if pipe.engine_provider == 'ours':

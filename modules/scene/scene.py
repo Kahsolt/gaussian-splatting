@@ -74,7 +74,7 @@ class Scene:
         self.args = args
         self.train_cameras: Dict[int, Camera] = {}
         self.test_cameras:  Dict[int, Camera] = {}
-        self.gaussians = GaussianModel(args.sh_degree)
+        self.gaussians = GaussianModel(args)
         self.background = (torch.ones if args.white_background else torch.zeros)([3], dtype=torch.float, device='cuda')
 
         if os.path.exists(os.path.join(args.source_path, 'sparse')):

@@ -61,6 +61,16 @@ class ModelParams(ParamGroup):
         # ↓↓↓ new add
         self.sanitize_init_pcd = False
         self.sanitize_load_guass = False
+        # neural decoder (from bhy)
+        self.use_neural_decoder = False
+        self.sh_feat_dim = 16 * 3           # 球谐嵌入深度 (对应 SH_degree=3 一般不能修改)
+        self.feat_dim = 32                  # 主特征深度
+        self.use_view_emb = False           # 使用视角编码MLP
+        self.view_emb_dim = 16              # 视角编码深度
+        self.appearance_dim = 0             # 外观嵌入深度
+        self.occlusion_dim = 0              # 遮挡嵌入深度
+        self.add_view_emb_to_color = False  # 在外观编码MLP中引入视角编码
+        self.add_view_emb_to_occlu = False  # 在遮挡编码MLP中引入视角编码
         super().__init__(parser, 'Loading Parameters', sentinel)
 
     def extract(self, args):
