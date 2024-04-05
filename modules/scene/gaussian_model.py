@@ -83,6 +83,17 @@ def inverse_sigmoid(x:Tensor) -> Tensor:
     return torch.log(x / (1 - x))
 
 
+def make_expon_lr_func_args(opt:OptimizationParams, prefix:str):
+    kwargs = {
+        'lr_init':        getattr(opt, f'{prefix}_lr_init'),
+        'lr_final':       getattr(opt, f'{prefix}_lr_final'),
+        'lr_delay_steps': getattr(opt, f'{prefix}_lr_delay_steps', None),
+        'lr_delay_mult':  getattr(opt, f'{prefix}_lr_delay_mult', None),
+        'max_steps':      getattr(opt, f'{prefix}_lr_max_steps', None),
+    }
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+
 def get_expon_lr_func(lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000):
     '''
     Copied from Plenoxels
@@ -429,7 +440,9 @@ class GaussianModel(nn.Module):
             {'name': 'f_rest',     'params': [self._features_rest], 'lr': opt.feature_lr / 20.0},
             {'name': 'opacity',    'params': [self._opacity],       'lr': opt.opacity_lr},
             {'name': 'importance', 'params': [self._importance],    'lr': opt.importance_lr},
+            {'name': 'mlp_color',  'params': self.mlp_color.parameters(), 'lr': opt.m_loss_depth} if self.mp.use_neural_decoder else None,
         ]
+        param_groups = [grp for grp in param_groups if grp is not None]
         self.optimizer = torch.optim.Adam(param_groups, lr=0.0, eps=1e-15)
         self.xyz_scheduler = get_expon_lr_func(
             lr_init=opt.position_lr_init * self.spatial_lr_scale,
@@ -442,6 +455,9 @@ class GaussianModel(nn.Module):
         self.max_radii2D    = torch.zeros((self.xyz.shape[0]),    dtype=torch.int,   device='cuda')
         self.percent_dense = opt.percent_dense
 
+        if self.mp.use_neural_decoder:
+            self.color_scheduler_args = get_expon_lr_func(**make_expon_lr_func_args(opt, 'mlp_color'))
+
     def optimizer_step(self):
         self.optimizer.step()
         self.optimizer.zero_grad(set_to_none=True)
@@ -451,8 +467,10 @@ class GaussianModel(nn.Module):
         for param_group in self.optimizer.param_groups:
             if param_group['name'] == 'xyz':
                 lr = self.xyz_scheduler(steps)
-                param_group['lr'] = lr
-                # return lr
+            elif param_group["name"] == 'mlp_color':
+                lr = self.color_scheduler_args(steps)
+            else: continue  # skip
+            param_group['lr'] = lr
 
     def replace_tensor_to_optimizer(self, tensor:Tensor, name:str) -> Dict[str, Tensor]:
         optimizable_tensors = {}
@@ -471,6 +489,7 @@ class GaussianModel(nn.Module):
     def cat_tensors_to_optimizer(self, tensors_dict:Dict[str, Tensor]) -> Dict[str, Tensor]:
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            if group['name'].startswith('mlp'): continue
             assert len(group['params']) == 1
             extension_tensor = tensors_dict[group['name']]
             stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -490,6 +509,7 @@ class GaussianModel(nn.Module):
     def prune_optimizer(self, mask:Tensor) -> Dict[str, Tensor]:
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+            if group['name'].startswith('mlp'): continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
                 stored_state['exp_avg'] = stored_state['exp_avg'][mask]

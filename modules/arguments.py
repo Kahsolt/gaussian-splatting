@@ -117,6 +117,11 @@ class OptimizationParams(ParamGroup):
         self.m_loss_depth_reverse = False
         self.m_loss_importance = False
         self.nerfw_loss = False
+        # neural decoder (from bhy)
+        self.mlp_color_lr_init = 0.008
+        self.mlp_color_lr_final = 0.00005
+        self.mlp_color_lr_delay_mult = 0.01
+        self.mlp_color_lr_max_steps = 30_000
         super().__init__(parser, 'Optimization Parameters')
 
 
