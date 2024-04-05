@@ -24,8 +24,10 @@ python train.py --m_loss_depth
 python train.py --m_loss_depth_reverse
 python train.py --m_loss_importance
 
-:resume
-python train.py --m_loss_importance
+:prune_by_importance
+python train.py -m output\train-importance --m_loss_importance
+python train.py -m output\train-importance --load_iter -1 --sanitize_load_gauss
+SIBR_remoteGaussian_app.exe
 
 
 :viewers

@@ -60,7 +60,7 @@ class ModelParams(ParamGroup):
         self.eval = False
         # ↓↓↓ new add
         self.sanitize_init_pcd = False
-        self.sanitize_load_guass = False
+        self.sanitize_load_gauss = False
         # neural decoder (from bhy)
         self.use_neural_decoder = False
         self.sh_feat_dim = 16 * 3           # 球谐嵌入深度 (对应 SH_degree=3 一般不能修改)

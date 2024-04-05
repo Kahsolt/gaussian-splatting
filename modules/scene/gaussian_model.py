@@ -319,10 +319,12 @@ class GaussianModel(nn.Module):
 
             # 每个点到最近三个邻居的平均距离的平方
             dist2 = torch.clamp_min(distCUDA2(points), 1e-8)
-            if not 'show':
+
+            if os.getenv('DEBUG_DIST'):
                 import matplotlib.pyplot as plt
                 plt.hist(dist2.sqrt().log().flatten().cpu().numpy(), bins=100)
                 plt.show()
+
             # 删掉离群点
             mask = dist2.sqrt().log() < -4
             points = points[mask]
@@ -358,7 +360,7 @@ class GaussianModel(nn.Module):
         if sanitize:
             importances = np.asarray(elem['importance'])
 
-            if not 'show':
+            if os.getenv('DEBUG_IMPORTANCE'):
                 import matplotlib.pyplot as plt
                 plt.hist(importances.flatten(), bins=100)
                 plt.show()

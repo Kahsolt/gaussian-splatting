@@ -132,7 +132,7 @@ class Scene:
         self.gaussians.save_ply(os.path.join(self.model_path, 'point_cloud', f'iteration_{steps}', 'point_cloud.ply'))
 
     def load_gaussian(self, steps:int):
-        self.gaussians.load_ply(os.path.join(self.model_path, 'point_cloud', f'iteration_{steps}', 'point_cloud.ply'), self.args.sanitize_load_guass)
+        self.gaussians.load_ply(os.path.join(self.model_path, 'point_cloud', f'iteration_{steps}', 'point_cloud.ply'), self.args.sanitize_load_gauss)
 
     def save_checkpoint(self, steps:int):
         state_dict = self.gaussians.state_dict()

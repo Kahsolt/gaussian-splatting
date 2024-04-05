@@ -129,7 +129,7 @@ def train(args:Namespace, mp:ModelParams, pp:PipelineParams, op:OptimizationPara
     ts_end = torch.cuda.Event(enable_timing=True)
 
     ''' Model '''
-    scene = Scene(mp)
+    scene = Scene(mp, load_iter=args.load_iter)
     gaussians: GaussianModel = scene.gaussians
     gaussians.setup_training(op)
     if args.load:
@@ -209,6 +209,7 @@ def train(args:Namespace, mp:ModelParams, pp:PipelineParams, op:OptimizationPara
                 pbar.close()
 
             # Log and save
+            Ll1 = Ll1 if 'Ll1' in locals() else l1_loss(image, gt_image)
             sw.add_scalar('train_loss_patches/l1_loss', Ll1.mean().item(), global_step=steps)
             sw.add_scalar('train_loss_patches/total_loss', loss.item(), global_step=steps)
             sw.add_scalar('iter_time', ts_start.elapsed_time(ts_end), global_step=steps)
@@ -253,7 +254,8 @@ if __name__ == '__main__':
     parser.add_argument('--test_iterations', nargs='+', type=int, default=[7_000, 30_000])
     parser.add_argument('--save_iterations', nargs='+', type=int, default=[7_000, 30_000])
     parser.add_argument('--checkpoint_iterations', nargs='+', type=int, default=[7_000, 30_000])
-    parser.add_argument('--load', type=str, help='resume from checkpoint')
+    parser.add_argument('--load', type=str, help='resume from checkpoint *.ckpt')
+    parser.add_argument('--load_iter', type=int, help='load from guassian <steps>.ply')
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true')
     parser.add_argument('--quiet', action='store_true', help='no console log')
