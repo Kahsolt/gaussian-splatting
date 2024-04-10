@@ -11,11 +11,13 @@
 
 import json
 import socket
+from typing import Callable
 import traceback
 
 import torch
 
-from modules.scene import MiniCam
+from modules.camera import MiniCam
+from modules.scene import Scene
 
 host = '127.0.0.1'
 port = 6009
@@ -90,3 +92,24 @@ def receive():
         return custom_cam, do_training, do_shs_python, do_rot_scale_python, keep_alive, scaling_modifier
     else:
         return [None] * 6
+
+
+def handle(render_func:Callable, scene:Scene, steps:int):
+    global conn, addr, listener
+    if conn == None:
+        try_connect()
+    while conn != None:
+        try:
+            hp = scene.hp
+            net_image_bytes = None
+            custom_cam, do_training, hp.convert_SHs_python, hp.compute_cov3D_python, keep_alive, scaling_modifer = receive()
+            if custom_cam != None:
+                net_image = render_func(scene.gaussians, custom_cam, scene.background, scaling_modifer)['render']
+                net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
+            send(net_image_bytes, hp.source_path)
+            if do_training and (steps < int(hp.iterations) or not keep_alive):
+                break
+        except Exception as e:
+            from traceback import print_exc
+            print_exc()
+            conn = None

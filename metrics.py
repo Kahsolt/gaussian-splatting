@@ -9,103 +9,98 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import os
+import warnings ; warnings.filterwarnings(action='ignore', category=UserWarning)
+
 import json
 from pathlib import Path
 from argparse import ArgumentParser
+from traceback import print_exc
+from typing import List, Tuple
 
 import torch
+from torch import Tensor
 import torchvision.transforms.functional as TF
 from PIL import Image
 from tqdm import tqdm
 
-from modules.lpipsPyTorch import lpips
-from modules.utils.loss_utils import ssim
-from modules.utils.loss_utils import psnr
+from modules.lpipsPyTorch import LPIPS
+from modules.utils.loss_utils import psnr, ssim
+
+torch.cuda.set_device(torch.device('cuda:0'))
+
+mean = lambda x: sum(x) / len(x) if len(x) else float('nan')
+pil_to_tensor = lambda x: TF.to_tensor(x)[:3, :, :].unsqueeze(0).cuda()
 
 
-def readImages(renders_dir, gt_dir):
+def read_images(renders_dir:Path, gt_dir:Path) -> Tuple[List[Tensor], List[Tensor], List[str]]:
     renders = []
-    gts = []
-    image_names = []
-    for fname in os.listdir(renders_dir):
-        render = Image.open(renders_dir / fname)
-        gt = Image.open(gt_dir / fname)
-        renders.append(TF.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda())
-        gts.append(TF.to_tensor(gt).unsqueeze(0)[:, :3, :, :].cuda())
-        image_names.append(fname)
-    return renders, gts, image_names
+    gts     = []
+    names   = []
+    for fp in renders_dir.iterdir():
+        fn = fp.name
+        renders.append(pil_to_tensor(Image.open(renders_dir / fn)))
+        gts.append(pil_to_tensor(Image.open(gt_dir / fn)))
+        names.append(fn)
+    return renders, gts, names
 
 
-def evaluate(model_paths):
-    full_dict = {}
-    per_view_dict = {}
-    full_dict_polytopeonly = {}
-    per_view_dict_polytopeonly = {}
-    print("")
+def evaluate(model_paths:List[Path], split:str='test'):
+    lpips = LPIPS(net_type='vgg').cuda()
 
     for scene_dir in model_paths:
         try:
-            print("Scene:", scene_dir)
-            full_dict[scene_dir] = {}
-            per_view_dict[scene_dir] = {}
-            full_dict_polytopeonly[scene_dir] = {}
-            per_view_dict_polytopeonly[scene_dir] = {}
+            print(f'Scene: {scene_dir} [{split}]')
+            results_agg      = {}
+            results_per_view = {}
 
-            test_dir = Path(scene_dir) / "test"
+            test_dir = scene_dir / split
+            for method_dir in test_dir.iterdir():
+                method = method_dir.name
+                print(f'Method: {method}')
+                results_agg     [method] = {}
+                results_per_view[method] = {}
 
-            for method in os.listdir(test_dir):
-                print("Method:", method)
+                renders_dir = method_dir / 'renders'
+                gt_dir = method_dir / 'gt'
+                renders, gts, image_names = read_images(renders_dir, gt_dir)
 
-                full_dict[scene_dir][method] = {}
-                per_view_dict[scene_dir][method] = {}
-                full_dict_polytopeonly[scene_dir][method] = {}
-                per_view_dict_polytopeonly[scene_dir][method] = {}
-
-                method_dir = test_dir / method
-                gt_dir = method_dir/ "gt"
-                renders_dir = method_dir / "renders"
-                renders, gts, image_names = readImages(renders_dir, gt_dir)
-
-                ssims = []
-                psnrs = []
+                ssims  = []
+                psnrs  = []
                 lpipss = []
+                for idx in tqdm(range(len(renders)), desc='Metric evaluation progress'):
+                    ssims. append(ssim (renders[idx], gts[idx]).item())
+                    psnrs. append(psnr (renders[idx], gts[idx]).item())
+                    lpipss.append(lpips(renders[idx], gts[idx]).item())
 
-                for idx in tqdm(range(len(renders)), desc="Metric evaluation progress"):
-                    ssims.append(ssim(renders[idx], gts[idx]))
-                    psnrs.append(psnr(renders[idx], gts[idx]))
-                    lpipss.append(lpips(renders[idx], gts[idx], net_type='vgg'))
+                print('  SSIM: {:>12.7f}' .format(mean(ssims),  '.5'))
+                print('  PSNR: {:>12.7f}' .format(mean(psnrs),  '.5'))
+                print('  LPIPS: {:>12.7f}'.format(mean(lpipss), '.5'))
+                print()
 
-                print("  SSIM: {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
-                print("  PSNR: {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
-                print("  LPIPS: {:>12.7f}".format(torch.tensor(lpipss).mean(), ".5"))
-                print("")
+                results_agg[method] = {
+                    'SSIM':  mean(ssims),
+                    'PSNR':  mean(psnrs),
+                    'LPIPS': mean(lpipss),
+                }
+                results_per_view[method] = {
+                    'SSIM':  {name: ssim for ssim, name in zip(ssims,  image_names)},
+                    'PSNR':  {name: psnr for psnr, name in zip(psnrs,  image_names)},
+                    'LPIPS': {name: lp   for lp,   name in zip(lpipss, image_names)},
+                }
 
-                full_dict[scene_dir][method].update({
-                    "SSIM": torch.tensor(ssims).mean().item(),
-                    "PSNR": torch.tensor(psnrs).mean().item(),
-                    "LPIPS": torch.tensor(lpipss).mean().item(),
-                })
-                per_view_dict[scene_dir][method].update({
-                    "SSIM": {name: ssim for ssim, name in zip(torch.tensor(ssims).tolist(), image_names)},
-                    "PSNR": {name: psnr for psnr, name in zip(torch.tensor(psnrs).tolist(), image_names)},
-                    "LPIPS": {name: lp for lp, name in zip(torch.tensor(lpipss).tolist(), image_names)},
-                })
-
-            with open(scene_dir + "/results.json", 'w') as fp:
-                json.dump(full_dict[scene_dir], fp, indent=True)
-            with open(scene_dir + "/per_view.json", 'w') as fp:
-                json.dump(per_view_dict[scene_dir], fp, indent=True)
+            with open(scene_dir/  'results.json', 'w', encoding='utf-8') as fp:
+                json.dump(results_agg, fp, indent=2, ensure_ascii=False)
+            with open(scene_dir / 'results_per_view.json', 'w', encoding='utf-8') as fp:
+                json.dump(results_per_view, fp, indent=2, ensure_ascii=False)
         except:
-            print("Unable to compute metrics for model", scene_dir)
+            print_exc()
+            print('Unable to compute metrics for model:', scene_dir)
 
 
-if __name__ == "__main__":
-    device = torch.device("cuda:0")
-    torch.cuda.set_device(device)
-
-    # Set up command line argument parser
-    parser = ArgumentParser(description="Training script parameters")
-    parser.add_argument('--model_paths', '-m', required=True, nargs="+", type=str, default=[])
+if __name__ == '__main__':
+    parser = ArgumentParser(description='Evaluating script parameters')
+    parser.add_argument('--model_paths', '-m', required=True, nargs='+', type=Path, default=[])
     args = parser.parse_args()
-    evaluate(args.model_paths)
+
+    evaluate(args.model_paths, 'train')
+    evaluate(args.model_paths, 'test' )

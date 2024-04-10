@@ -11,7 +11,7 @@ conda activate gs
 python -m pip install -U pip
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install tqdm pyreadline
-pip install plyfile
+pip install plyfile pyfftw
 
 REM open VS 20xx x64 Native Command Prompt
 SET DISTUTILS_USE_SDK=1

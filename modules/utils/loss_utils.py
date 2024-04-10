@@ -74,9 +74,9 @@ def _ssim(img1, img2, window, window_size, channel, reduction='mean'):
 
     if reduction == 'none':
         return ssim_map
-    elif reduction == 'batchmean':
+    elif reduction == 'mean':
         return ssim_map.mean()
-    else:   # 'mean'
+    else:   # size_average=False
         return ssim_map.mean(1).mean(1).mean(1)
 
 def ssim(img1, img2, window_size=11, reduction='mean'):
