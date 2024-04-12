@@ -22,6 +22,7 @@ from torch import Tensor
 
 from modules.data import SCENE_DATA_LOADERS
 from modules.camera import Camera, load_camera
+from modules.model import GaussianModel_Neural
 
 try:  # only for annotation use, avoid cyclic import error :(
     from modules.hparam import HyperParams
@@ -41,11 +42,13 @@ class Scene:
             print('>> should implement model.py script')
 
         self.hp: HyperParams = hp
+        self.resolution_scales = resolution_scales
         self.train_cameras: Dict[float, List[Camera]] = {}
         self.test_cameras:  Dict[float, List[Camera]] = {}
         self.gaussians: GaussianModel = GaussianModel_cls(hp)
         self.background = (torch.ones if hp.white_background else torch.zeros)([3], dtype=torch.float, device='cuda')
 
+        # Load scene info
         if os.path.exists(os.path.join(hp.source_path, 'sparse')):
             scene_info = SCENE_DATA_LOADERS['Colmap'](hp.source_path, hp.images, hp.eval)
         elif os.path.exists(os.path.join(hp.source_path, 'dense', 'sparse')):
@@ -55,22 +58,9 @@ class Scene:
             scene_info = SCENE_DATA_LOADERS['Blender'](hp.source_path, hp.white_background, hp.eval)
         else:
             raise TypeError(f'Could not recognize scene type for dataset {hp.source_path}')
+        self.scene_info = scene_info
 
-        # FIXME: monkey patch for neural GaussianModel_cls
-        if hasattr(self.gaussians, 'init_embeddings'):
-            self.gaussians.init_embeddings(len(scene_info.train_cameras))
-
-        # FIXME: monkey patch init spatial_lr_scale
-        self.cameras_extent: float = scene_info.nerf_normalization['radius']
-        print('>> cameras_extent:', self.cameras_extent)
-        self.gaussians.spatial_lr_scale = self.cameras_extent
-
-        for res in resolution_scales:
-            print('Loading Train Cameras')
-            self.train_cameras[res] = [load_camera(hp.resolution, id, cam, res) for id, cam in enumerate(scene_info.train_cameras)]
-            print('Loading Test Cameras')
-            self.test_cameras[res] = [load_camera(hp.resolution, id, cam, res) for id, cam in enumerate(scene_info.test_cameras)]
-
+        # Init gaussians
         load_iter = hp.load_iter
         if load_iter is not None and load_iter < 0:
             try:
@@ -90,8 +80,27 @@ class Scene:
             print(f'>> [gaussian] init via load_ply at iteration-{load_iter}')
             self.load_gaussian(load_iter)
 
+        if isinstance(self.gaussians, GaussianModel_Neural):
+            self.gaussians.init_embeddings(len(scene_info.train_cameras))
+
+        # FIXME: monkey patch init spatial_lr_scale
+        self.cameras_extent: float = scene_info.nerf_normalization['radius']
+        print('>> cameras_extent:', self.cameras_extent)
+        self.gaussians.spatial_lr_scale = self.cameras_extent
+
+        # Init cameras
+        self.process_cameras()
+
     @property
     def model_path(self) -> Path: return Path(self.hp.model_path)
+
+    def process_cameras(self):
+        resolution = self.hp.resolution
+        for res in self.resolution_scales:
+            print('Loading Train Cameras')
+            self.train_cameras[res] = [load_camera(resolution, id, cam, res) for id, cam in enumerate(self.scene_info.train_cameras)]
+            print('Loading Test Cameras')
+            self.test_cameras[res] = [load_camera(resolution, id, cam, res) for id, cam in enumerate(self.scene_info.test_cameras)]
 
     @classmethod
     def random_background(cls) -> Tensor:
@@ -106,15 +115,14 @@ class Scene:
     def save_gaussian(self, steps:int):
         base_dir = self.model_path / 'point_cloud' / f'iteration_{steps}'
         self.gaussians.save_ply(base_dir / 'point_cloud.ply')
-        # FIXME: monkey patch for neural GaussianModel_cls
-        if hasattr(self.gaussians, 'save_pth'):
+        if isinstance(self.gaussians, GaussianModel_Neural):
             self.gaussians.save_pth(base_dir / 'model.pth')
 
     def load_gaussian(self, steps:int):
         base_dir = self.model_path / 'point_cloud' / f'iteration_{steps}'
         self.gaussians.load_ply(base_dir / 'point_cloud.ply')
-        # FIXME: monkey patch for neural GaussianModel_cls
-        if hasattr(self.gaussians, 'load_pth'):
+        # FIXME: monkey patch for neural GaussianModel_neural
+        if isinstance(self.gaussians, GaussianModel_Neural):
             self.gaussians.load_pth(base_dir / 'model.pth')
 
     def save_checkpoint(self, steps:int):

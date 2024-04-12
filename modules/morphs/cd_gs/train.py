@@ -30,7 +30,7 @@ from .model import GaussianModel
 from .render import render, mix_image
 
 
-def network_gui_render(render_func:Callable, scene:Scene, steps:int):
+def network_gui_handle(render_func:Callable, scene:Scene, steps:int):
     if network_gui.conn == None:
         network_gui.try_connect()
     while network_gui.conn != None:
@@ -46,8 +46,6 @@ def network_gui_render(render_func:Callable, scene:Scene, steps:int):
             if do_training and (steps < int(hp.iterations) or not keep_alive):
                 break
         except Exception as e:
-            from traceback import print_exc
-            print_exc()
             network_gui.conn = None
 
 
@@ -74,7 +72,7 @@ def train(args:Namespace, hp:HyperParams):
     for steps in range(start_steps, hp.iterations + 1):
         # Debug
         if steps == args.debug_from: hp.debug = True
-        if args.network_gui: network_gui_render(render, scene, steps)
+        if args.network_gui: network_gui_handle(render, scene, steps)
 
         ts_start.record()
 
@@ -126,7 +124,7 @@ def train(args:Namespace, hp:HyperParams):
             sw.add_scalar('iter_time', ts_start.elapsed_time(ts_end), global_step=steps)
             sw.add_scalar('n_points', gaussians.n_points, global_step=steps)
             if steps in hp.test_iterations:
-                sw.add_histogram('scene/opacity_histogram', scene.gaussians.opacity, global_step=steps)
+                sw.add_histogram('scene/opacity_histogram', gaussians.opacity, global_step=steps)
 
                 validation_configs: Dict[str, List[Camera]] = {
                     'test': scene.get_test_cameras(),

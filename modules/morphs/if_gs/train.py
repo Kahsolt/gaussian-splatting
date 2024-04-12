@@ -12,7 +12,7 @@
 from pathlib import Path
 from random import shuffle
 from argparse import Namespace
-from typing import List, Dict
+from typing import List, Dict, Callable
 
 import torch
 from torch import Tensor
@@ -30,6 +30,24 @@ from .model import SingleFreqGaussianModel
 from .render import render
 
 
+def network_gui_handle(render_func:Callable, scene:Scene, steps:int):
+    if network_gui.conn == None:
+        network_gui.try_connect()
+    while network_gui.conn != None:
+        try:
+            hp = scene.hp
+            net_image_bytes = None
+            custom_cam, do_training, _, hp.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
+            if custom_cam != None:
+                rendered = render_func(scene.cur_gaussians, custom_cam, scene.background, scaling_modifer)['render']
+                net_image_bytes = memoryview((torch.clamp(rendered, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
+            network_gui.send(net_image_bytes, hp.source_path)
+            if do_training and (steps < int(hp.iterations) or not keep_alive):
+                break
+        except Exception as e:
+            network_gui.conn = None
+
+
 def train(args:Namespace, hp:HyperParams):
     ''' Log & Bookkeep '''
     if args.network_gui: network_gui.init(args.ip, args.port)
@@ -43,7 +61,7 @@ def train(args:Namespace, hp:HyperParams):
     scene = Scene(hp)
     for idx in range(hp.L_freq):
         scene.activate_gaussian(idx)
-        gaussians: SingleFreqGaussianModel = scene.gaussians
+        gaussians: SingleFreqGaussianModel = scene.cur_gaussians
         gaussians.setup_training()
         if hp.load: start_steps = scene.load_checkpoint(hp.load)
 
@@ -54,7 +72,7 @@ def train(args:Namespace, hp:HyperParams):
         for steps in range(start_steps, hp.iterations + 1):
             # Debug
             if steps == args.debug_from: hp.debug = True
-            if args.network_gui: network_gui.handle(render, scene, steps)
+            if args.network_gui: network_gui_handle(render, scene, steps)
 
             ts_start.record()
 
@@ -75,6 +93,7 @@ def train(args:Namespace, hp:HyperParams):
             radii = render_pkg['radii']                         # [P=182686], int32
 
             # Loss
+            breakpoint()
             gt_image = viewpoint_cam.images[idx+1].cuda()
             Ll1 = l1_loss(image, gt_image)
             Lssim = ssim(image, gt_image)
@@ -105,7 +124,7 @@ def train(args:Namespace, hp:HyperParams):
                 sw.add_scalar('iter_time', ts_start.elapsed_time(ts_end), global_step=steps)
                 sw.add_scalar('n_points', gaussians.n_points, global_step=steps)
                 if steps in hp.test_iterations:
-                    sw.add_histogram('scene/opacity_histogram', scene.gaussians.opacity, global_step=steps)
+                    sw.add_histogram('scene/opacity_histogram', gaussians.opacity, global_step=steps)
 
                     validation_configs: Dict[str, List[Camera]] = {
                         'test': scene.get_test_cameras(),

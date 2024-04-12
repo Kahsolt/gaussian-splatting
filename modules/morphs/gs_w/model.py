@@ -11,14 +11,12 @@
 
 import os
 from pathlib import Path
-from typing import List, Dict, Callable, Any
+from typing import List, Dict, Any
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 from torch.nn import Parameter
-from torch.optim import Optimizer
 from plyfile import PlyData, PlyElement, PlyProperty
 import numpy as np
 from simple_knn._C import distCUDA2
@@ -26,37 +24,24 @@ from simple_knn._C import distCUDA2
 from modules.data import BasicPointCloud
 from modules.camera import Camera
 from modules.layers import ColorMLP, OccluMLP, Embedding
+from modules.model import GaussianModel_Neural
 from modules.utils.modeling_utils import *
 from modules.utils.training_utils import *
 
 from .hparam import HyperParams
 
 
-class GaussianModel(nn.Module):
+class GaussianModel(GaussianModel_Neural):
 
     ''' gs-w from bhy '''
 
     def __init__(self, hp:HyperParams):
-        super().__init__()
+        super().__init__(hp)
+
+        self.hp: HyperParams
 
         # props
-        self._xyz:        Parameter = None
-        self._scaling:    Parameter = None
-        self._rotation:   Parameter = None
-        self._features:   Parameter = None
-        self._opacity:    Parameter = None
         self._importance: Parameter = None
-        # optim
-        self.optimizer:        Optimizer = None
-        self.xyz_scheduler:    Callable  = None
-        self.xyz_grad_accum:   Tensor    = None
-        self.xyz_grad_count:   Tensor    = None
-        self.max_radii2D:      Tensor    = None
-        self.percent_dense:    float     = 0.01
-        self.spatial_lr_scale: float     = 1.0
-        # consts
-        self.hp = hp
-        self.setup_transform_functions()
 
         # networks
         self.embedding_appearance: Embedding = nn.Identity()
@@ -122,54 +107,13 @@ class GaussianModel(nn.Module):
 
         return colors, occlus
 
-    def setup_transform_functions(self):
-        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
-            L = build_scaling_rotation(scaling_modifier * scaling, rotation)
-            actual_covariance = L @ L.transpose(1, 2)
-            symm = strip_symmetric(actual_covariance)
-            return symm
-
-        self.scaling_activation = torch.exp
-        self.scaling_inverse_activation = torch.log
-        self.rotation_activation = F.normalize
-        self.opacity_activation = torch.sigmoid
-        self.opacity_inverse_activation = inverse_sigmoid
-        self.covariance_activation = build_covariance_from_scaling_rotation
-
     @property
     def is_train(self):
         return self.mlp_color.training
 
     @property
-    def n_points(self):
-        return self.xyz.shape[0]
-
-    @property
-    def xyz(self):
-        return self._xyz
-
-    @property
-    def scaling(self):
-        return self.scaling_activation(self._scaling)
-
-    @property
-    def rotation(self):
-        return self.rotation_activation(self._rotation)
-
-    @property
-    def features(self):
-        return self._features
-
-    @property
-    def opacity(self):
-        return self.opacity_activation(self._opacity)
-
-    @property
     def importance(self):
         return self._importance
-
-    def get_covariance(self, scaling_modifier:float=1):
-        return self.covariance_activation(self.scaling, scaling_modifier, self._rotation)
 
     def init_embeddings(self, num_cameras:int):
         hp = self.hp
@@ -179,48 +123,25 @@ class GaussianModel(nn.Module):
             self.embedding_occlusion = Embedding(num_cameras, hp.occlusion_dim)
 
     def state_dict(self) -> Dict[str, Any]:
-        return {
-            # props
-            '_xyz':             self._xyz,
-            '_scaling':         self._scaling,
-            '_rotation':        self._rotation,
-            '_features':        self._features,
-            '_opacity':         self._opacity,
-            '_importance':      self._importance,
-            'color_mlp':        self.mlp_color.state_dict(),
-            'occlu_mlp':        self.mlp_occlu.state_dict(),
-            'view_mlp':         self.mlp_view.state_dict(),
-            'appearance':       self.embedding_appearance.state_dict(),
-            'occlusion':        self.embedding_occlusion.state_dict(),
-            # optim
-            'optimizer':        self.optimizer.state_dict(),
-            'xyz_grad_accum':   self.xyz_grad_accum,
-            'xyz_grad_count':   self.xyz_grad_count,
-            'max_radii2D':      self.max_radii2D,
-            'percent_dense':    self.percent_dense,
-            'spatial_lr_scale': self.spatial_lr_scale,
-        }
+        state_dict = super().state_dict()
+        state_dict.update({
+            '_importance': self._importance,
+            'color_mlp':   self.mlp_color.state_dict(),
+            'occlu_mlp':   self.mlp_occlu.state_dict(),
+            'view_mlp':    self.mlp_view.state_dict(),
+            'appearance':  self.embedding_appearance.state_dict(),
+            'occlusion':   self.embedding_occlusion.state_dict(),
+        })
+        return state_dict
 
     def load_state_dict(self, state_dict:Dict[str, Any]):
-        # load data first
-        self._xyz        = state_dict['_xyz']
-        self._scaling    = state_dict['_scaling']
-        self._rotation   = state_dict['_rotation']
-        self._features   = state_dict['_features']
-        self._opacity    = state_dict['_opacity']
         self._importance = state_dict['_importance']
         self.mlp_color.load_state_dict(state_dict['mlp_color'])
         self.mlp_occlu.load_state_dict(state_dict['mlp_occlu'])
         self.mlp_view.load_state_dict(state_dict['mlp_view'])
         self.embedding_appearance.load_state_dict(state_dict['embedding_appearance'])
         self.embedding_occlusion.load_state_dict(state_dict['embedding_occlusion'])
-        # then recover optim state
-        self.optimizer.load_state_dict(state_dict['optimizer'])
-        self.xyz_grad_accum   = state_dict['xyz_grad_accum']
-        self.xyz_grad_count   = state_dict['xyz_grad_count']
-        self.max_radii2D      = state_dict['max_radii2D']
-        self.percent_dense    = state_dict['percent_dense']
-        self.spatial_lr_scale = state_dict['spatial_lr_scale']
+        super().load_state_dict(state_dict)
 
     def save_pth(self, fp:Path):
         fp.parent.mkdir(exist_ok=True, parents=True)
@@ -350,10 +271,6 @@ class GaussianModel(nn.Module):
         self.max_radii2D    = torch.zeros((self.xyz.shape[0]),    dtype=torch.int,   device='cuda')
         self.percent_dense = hp.percent_dense
 
-    def optimizer_step(self):
-        self.optimizer.step()
-        self.optimizer.zero_grad(set_to_none=True)
-
     def update_learning_rate(self, steps:int):
         for param_group in self.optimizer.param_groups:
             if param_group['name'] == 'xyz':
@@ -370,20 +287,6 @@ class GaussianModel(nn.Module):
                 lr = self.occlusion_scheduler_args(steps)
             else: continue  # skip
             param_group['lr'] = lr
-
-    def replace_tensor_to_optimizer(self, tensor:Tensor, name:str) -> Dict[str, Tensor]:
-        optimizable_tensors = {}
-        for group in self.optimizer.param_groups:
-            if group['name'] == name:
-                stored_state = self.optimizer.state.get(group['params'][0], None)
-                stored_state['exp_avg'] = torch.zeros_like(tensor)
-                stored_state['exp_avg_sq'] = torch.zeros_like(tensor)
-
-                del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter(tensor.requires_grad_(True))
-                self.optimizer.state[group['params'][0]] = stored_state
-                optimizable_tensors[group['name']] = group['params'][0]
-        return optimizable_tensors
 
     def cat_tensors_to_optimizer(self, tensors_dict:Dict[str, Tensor]) -> Dict[str, Tensor]:
         optimizable_tensors = {}
@@ -528,12 +431,3 @@ class GaussianModel(nn.Module):
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
-
-    def add_densification_stats(self, viewspace_point_tensor:Tensor, update_filter):
-        self.xyz_grad_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
-        self.xyz_grad_count[update_filter] += 1
-
-    def reset_opacity(self):
-        opacities_new = inverse_sigmoid(torch.min(self.opacity, torch.ones_like(self.opacity) * 0.01))
-        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, 'opacity')
-        self._opacity = optimizable_tensors['opacity']

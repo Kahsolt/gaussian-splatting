@@ -24,7 +24,7 @@ from .hparam import HyperParams
 class MutilFreqGaussianModel:
 
     def __init__(self, hp:HyperParams):
-        self.hp = hp
+        self.hp: HyperParams = hp
 
         self.gaussians = {idx: SingleFreqGaussianModel(hp) for idx in range(hp.L_freq)}
         self.cur_idx = 0
@@ -86,3 +86,7 @@ class MutilFreqGaussianModel:
                 print(f'Number of points of freq_{idx} at initialization:', gaussians.n_points)
         else:
             raise ValueError(f'Unknown kind: {hp.mutil_method}')
+
+
+# unify interface name :)
+GaussianModel = MutilFreqGaussianModel

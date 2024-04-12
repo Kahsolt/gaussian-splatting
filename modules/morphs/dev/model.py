@@ -10,19 +10,18 @@
 #
 
 import os
-from typing import List, Dict, Callable, Any
+from typing import List, Dict, Any
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 from torch.nn import Parameter
-from torch.optim import Optimizer
 from plyfile import PlyData, PlyElement, PlyProperty
 import numpy as np
 from simple_knn._C import distCUDA2
 
 from modules.data import BasicPointCloud
+from modules.model import GaussianModel_SH
 from modules.utils.sh_utils import RGB2SH
 from modules.utils.modeling_utils import *
 from modules.utils.training_utils import *
@@ -30,123 +29,38 @@ from modules.utils.training_utils import *
 from .hparam import HyperParams
 
 
-class GaussianModel:
+class GaussianModel(GaussianModel_SH):
 
     ''' free experimental playground :) '''
 
     def __init__(self, hp:HyperParams):
-        super().__init__()
+        super().__init__(hp)
+
+        self.hp: HyperParams
 
         # props
-        self._xyz:           Parameter = None
-        self._scaling:       Parameter = None
-        self._rotation:      Parameter = None
-        self._features_dc:   Parameter = None
-        self._features_rest: Parameter = None
-        self._opacity:       Parameter = None
-        self._importance:    Parameter = None
-        # optim
-        self.optimizer:        Optimizer = None
-        self.xyz_scheduler:    Callable  = None
-        self.xyz_grad_accum:   Tensor    = None
-        self.xyz_grad_count:   Tensor    = None
-        self.max_radii2D:      Tensor    = None
-        self.max_sh_degree:    int       = hp.sh_degree
-        self.cur_sh_degree:    int       = 0
-        self.percent_dense:    float     = 0.01
-        self.spatial_lr_scale: float     = 1.0
-        # consts
-        self.hp = hp
-        self.setup_transform_functions()
+        self._importance: Parameter = None
 
     def setup_transform_functions(self):
-        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
-            L = build_scaling_rotation(scaling_modifier * scaling, rotation)
-            actual_covariance = L @ L.transpose(1, 2)
-            symm = strip_symmetric(actual_covariance)
-            return symm
-
-        self.scaling_activation = torch.exp
-        self.scaling_inverse_activation = torch.log
-        self.rotation_activation = F.normalize
-        self.opacity_activation = torch.sigmoid
-        self.opacity_inverse_activation = inverse_sigmoid
+        super().setup_transform_functions()
         self.importance_activation = torch.tanh
         self.importance_inverse_activation = torch.atanh
-        self.covariance_activation = build_covariance_from_scaling_rotation
-
-    @property
-    def n_points(self):
-        return self.xyz.shape[0]
-
-    @property
-    def xyz(self):
-        return self._xyz
-
-    @property
-    def scaling(self):
-        return self.scaling_activation(self._scaling)
-
-    @property
-    def rotation(self):
-        return self.rotation_activation(self._rotation)
-
-    @property
-    def features(self):  # colors, [N, D=16, C=3] for SH_deg=3
-        features_dc = self._features_dc
-        features_rest = self._features_rest
-        return torch.cat((features_dc, features_rest), dim=1)
-
-    @property
-    def opacity(self):
-        return self.opacity_activation(self._opacity)
 
     @property
     def importance(self):
         return self.importance_activation(self._importance)
 
-    def get_covariance(self, scaling_modifier:float=1):
-        return self.covariance_activation(self.scaling, scaling_modifier, self._rotation)
-
     def state_dict(self) -> Dict[str, Any]:
-        return {
-            # props
-            '_xyz':             self._xyz,
-            '_scaling':         self._scaling,
-            '_rotation':        self._rotation,
-            '_features_dc':     self._features_dc,
-            '_features_rest':   self._features_rest,
-            '_opacity':         self._opacity,
-            '_importance':      self._importance,
-            # optim
-            'optimizer':        self.optimizer.state_dict(),
-            'xyz_grad_accum':   self.xyz_grad_accum,
-            'xyz_grad_count':   self.xyz_grad_count,
-            'max_radii2D':      self.max_radii2D,
-            'max_sh_degree':    self.max_sh_degree,
-            'cur_sh_degree':    self.cur_sh_degree,
-            'percent_dense':    self.percent_dense,
-            'spatial_lr_scale': self.spatial_lr_scale,
-        }
+        state_dict = super().state_dict()
+        state_dict.update({
+            '_importance': self._importance,
+        })
+        return state_dict
 
     def load_state_dict(self, state_dict:Dict[str, Any]):
         # load data first
-        self._xyz           = state_dict['_xyz']
-        self._scaling       = state_dict['_scaling']
-        self._rotation      = state_dict['_rotation']
-        self._features_dc   = state_dict['_features_dc']
-        self._features_rest = state_dict['_features_rest']
-        self._opacity       = state_dict['_opacity']
-        self._importance    = state_dict['_importance']
-        # then recover optim state
-        self.optimizer.load_state_dict(state_dict['optimizer'])
-        self.xyz_grad_accum   = state_dict['xyz_grad_accum']
-        self.xyz_grad_count   = state_dict['xyz_grad_count']
-        self.max_radii2D      = state_dict['max_radii2D']
-        self.max_sh_degree    = state_dict['max_sh_degree']
-        self.cur_sh_degree    = state_dict['cur_sh_degree']
-        self.percent_dense    = state_dict['percent_dense']
-        self.spatial_lr_scale = state_dict['spatial_lr_scale']
+        self._importance = state_dict['_importance']
+        super().load_state_dict(state_dict)
 
     def from_pcd(self, pcd:BasicPointCloud, sanitize:bool=False):
         points = torch.from_numpy(np.asarray(pcd.points)).to(dtype=torch.float, device='cuda')
@@ -278,67 +192,6 @@ class GaussianModel:
         self.max_radii2D    = torch.zeros((self.xyz.shape[0]),    dtype=torch.int,   device='cuda')
         self.percent_dense = hp.percent_dense
 
-    def optimizer_step(self):
-        self.optimizer.step()
-        self.optimizer.zero_grad(set_to_none=True)
-
-    def update_learning_rate(self, steps:int):
-        ''' Learning rate scheduling per step '''
-        for param_group in self.optimizer.param_groups:
-            if param_group['name'] == 'xyz':
-                lr = self.xyz_scheduler(steps)
-                param_group['lr'] = lr
-
-    def replace_tensor_to_optimizer(self, tensor:Tensor, name:str) -> Dict[str, Tensor]:
-        optimizable_tensors = {}
-        for group in self.optimizer.param_groups:
-            if group['name'] == name:
-                stored_state = self.optimizer.state.get(group['params'][0], None)
-                stored_state['exp_avg'] = torch.zeros_like(tensor)
-                stored_state['exp_avg_sq'] = torch.zeros_like(tensor)
-
-                del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter(tensor.requires_grad_(True))
-                self.optimizer.state[group['params'][0]] = stored_state
-                optimizable_tensors[group['name']] = group['params'][0]
-        return optimizable_tensors
-
-    def cat_tensors_to_optimizer(self, tensors_dict:Dict[str, Tensor]) -> Dict[str, Tensor]:
-        optimizable_tensors = {}
-        for group in self.optimizer.param_groups:
-            assert len(group['params']) == 1
-            extension_tensor = tensors_dict[group['name']]
-            stored_state = self.optimizer.state.get(group['params'][0], None)
-            if stored_state is not None:
-                stored_state['exp_avg'] = torch.cat((stored_state['exp_avg'], torch.zeros_like(extension_tensor)), dim=0)
-                stored_state['exp_avg_sq'] = torch.cat((stored_state['exp_avg_sq'], torch.zeros_like(extension_tensor)), dim=0)
-
-                del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor), dim=0), requires_grad=True)
-                self.optimizer.state[group['params'][0]] = stored_state
-                optimizable_tensors[group['name']] = group['params'][0]
-            else:
-                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor), dim=0), requires_grad=True)
-                optimizable_tensors[group['name']] = group['params'][0]
-        return optimizable_tensors
-
-    def prune_optimizer(self, mask:Tensor) -> Dict[str, Tensor]:
-        optimizable_tensors = {}
-        for group in self.optimizer.param_groups:
-            stored_state = self.optimizer.state.get(group['params'][0], None)
-            if stored_state is not None:
-                stored_state['exp_avg'] = stored_state['exp_avg'][mask]
-                stored_state['exp_avg_sq'] = stored_state['exp_avg_sq'][mask]
-
-                del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter(group['params'][0][mask], requires_grad=True)
-                self.optimizer.state[group['params'][0]] = stored_state
-                optimizable_tensors[group['name']] = group['params'][0]
-            else:
-                group['params'][0] = nn.Parameter(group['params'][0][mask], requires_grad=True)
-                optimizable_tensors[group['name']] = group['params'][0]
-        return optimizable_tensors
-
     def prune_points(self, mask:Tensor):
         valid_points_mask = ~mask
         optimizable_tensors = self.prune_optimizer(valid_points_mask)
@@ -418,40 +271,3 @@ class GaussianModel:
         new_importances   = self._importance   [selected_pts_mask]
 
         self.densification_postfix(new_xyz, new_scaling, new_rotation, new_features_dc, new_features_rest, new_opacities, new_importances)
-
-    def densify_and_prune(self, max_grad:float, min_opacity:float, extent:float, max_screen_size:int):
-        grads = self.xyz_grad_accum / self.xyz_grad_count
-        if os.getenv('DEBUG_GRAD'):
-            with torch.no_grad():
-                has_grad = ~grads.isnan()
-                has_grad_cnt = has_grad.sum()
-                fixed_grads = grads.clone()
-                fixed_grads[~has_grad] = 0.0
-                print(f'[has_grad] {has_grad_cnt} / {grads.numel()} = {has_grad_cnt / grads.numel()}')
-                print(f'[abs(grad)] max: {fixed_grads.max()}, mean: {fixed_grads.sum() / has_grad_cnt}')
-        grads[grads.isnan()] = 0.0
-
-        self.densify_and_clone(grads, max_grad, extent)
-        self.densify_and_split(grads, max_grad, extent)
-
-        prune_mask = (self.opacity < min_opacity).squeeze()
-        if max_screen_size:
-            big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.scaling.max(dim=1).values > 0.1 * extent
-            prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
-        self.prune_points(prune_mask)
-
-        torch.cuda.empty_cache()
-
-    def add_densification_stats(self, viewspace_point_tensor:Tensor, update_filter):
-        self.xyz_grad_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
-        self.xyz_grad_count[update_filter] += 1
-
-    def reset_opacity(self):
-        opacities_new = inverse_sigmoid(torch.min(self.opacity, torch.ones_like(self.opacity) * 0.01))
-        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, 'opacity')
-        self._opacity = optimizable_tensors['opacity']
-
-    def oneup_SH_degree(self):
-        if self.cur_sh_degree < self.max_sh_degree:
-            self.cur_sh_degree += 1

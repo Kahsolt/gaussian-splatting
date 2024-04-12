@@ -110,6 +110,4 @@ def handle(render_func:Callable, scene:Scene, steps:int):
             if do_training and (steps < int(hp.iterations) or not keep_alive):
                 break
         except Exception as e:
-            from traceback import print_exc
-            print_exc()
             conn = None

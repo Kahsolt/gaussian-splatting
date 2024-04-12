@@ -95,7 +95,7 @@ def train(args:Namespace, hp:HyperParams):
             sw.add_scalar('iter_time', ts_start.elapsed_time(ts_end), global_step=steps)
             sw.add_scalar('n_points', gaussians.n_points, global_step=steps)
             if steps in hp.test_iterations:
-                sw.add_histogram('scene/opacity_histogram', scene.gaussians.opacity, global_step=steps)
+                sw.add_histogram('scene/opacity_histogram', gaussians.opacity, global_step=steps)
 
                 validation_configs: Dict[str, List[Camera]] = {
                     'test': scene.get_test_cameras(),
