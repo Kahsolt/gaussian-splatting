@@ -20,6 +20,16 @@ from modules.scene import Scene
 from modules.utils.general_utils import safe_state
 
 
+def get_ckpt_morph() -> str:
+    parser = ArgumentParser()
+    hp = HyperParams()
+    hp.send_to(parser)
+    cmd_args, _ = parser.parse_known_args()
+    args = get_combined_args(cmd_args, hp)
+    hp.extract_from(args)
+    return hp.morph
+
+
 if __name__ == '__main__':
     parser = ArgumentParser(description='Testing script parameters')
     parser.add_argument('--skip_train', action='store_true')
@@ -30,17 +40,9 @@ if __name__ == '__main__':
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    if 'recover -M/--morph at training':
-        tmp_parser = ArgumentParser()
-        tmp_hp = HyperParams()
-        tmp_hp.send_to(tmp_parser)
-        tmp_cmd_args, _ = tmp_parser.parse_known_args()
-        tmp_args = get_combined_args(tmp_cmd_args, tmp_hp)
-        tmp_hp.extract_from(tmp_args)
-        morph = tmp_hp.morph
-        print('>> morph:', morph)
-        # avoid name pollution
-        del tmp_parser, tmp_cmd_args, tmp_args, tmp_hp
+    # Recover -M/--morph at training
+    morph = get_ckpt_morph()
+    print('>> morph:', morph)
 
     # Resolve real implemetations
     try:

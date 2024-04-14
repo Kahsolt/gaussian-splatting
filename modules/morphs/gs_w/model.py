@@ -123,6 +123,13 @@ class GaussianModel(GaussianModel_Neural):
         if hp.occlusion_dim > 0:
             self.embedding_occlusion = Embedding(num_cameras, hp.occlusion_dim)
 
+    @property
+    def embeddings(self):
+        return [
+            self.embedding_appearance,
+            self.embedding_occlusion,
+        ]
+
     def state_dict(self) -> Dict[str, Any]:
         state_dict = super().state_dict()
         state_dict.update({

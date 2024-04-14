@@ -62,6 +62,13 @@ class Camera:
     def image(self, idx:int):
         return self.images[idx + (1 if self.hp.split_kind == 'addictive' else 0)]
 
+    @property
+    def gt_image(self):
+        if self.hp.split_kind == 'addictive':
+            return self.images[0]
+        if self.hp.split_kind == 'cumulative':
+            return self.images[-1]
+
 
 def PILtoTorch(img:PILImage, resize:Tuple[int, int]=None, hp:HyperParams=None) -> List[Tensor]:
     assert hp is not None

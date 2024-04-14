@@ -590,6 +590,10 @@ class GaussianModel_Neural(GaussianModel, nn.Module):
         pass
 
     @property
+    def embeddings(self):
+        return []
+
+    @property
     def features(self):
         return self._features
 
