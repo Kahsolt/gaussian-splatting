@@ -10,14 +10,15 @@
 #
 
 import os
-from typing import List, Dict, Any
+from typing import List, Tuple, Dict, Any
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import Parameter
-from plyfile import PlyData, PlyElement, PlyProperty
+from plyfile import PlyElement
 import numpy as np
+from numpy import ndarray
 from simple_knn._C import distCUDA2
 
 from modules.data import BasicPointCloud
@@ -35,8 +36,6 @@ class GaussianModel(GaussianModel_SH):
 
     def __init__(self, hp:HyperParams):
         super().__init__(hp)
-
-        self.hp: HyperParams
 
         # props
         self._importance: Parameter = None
@@ -103,95 +102,30 @@ class GaussianModel(GaussianModel_SH):
         self._opacity       = nn.Parameter(opacities,   requires_grad=True)
         self._importance    = nn.Parameter(importances, requires_grad=True)
 
-    def load_ply(self, path:str, sanitize:bool=False):
-        plydata = PlyData.read(path)
-        elem: PlyElement = plydata.elements[0]
-        properties: List[PlyProperty] = elem.properties
-        sort_fn = lambda x: int(x.split('_')[-1])
+    def load_ply(self, elem:PlyElement):
+        super().load_ply(elem)
 
-        xyz = np.stack((np.asarray(elem['x']), np.asarray(elem['y']), np.asarray(elem['z'])), axis=1)
-        scale_names = sorted([p.name for p in properties if p.name.startswith('scale_')], key=sort_fn)
-        scales = np.zeros((xyz.shape[0], len(scale_names)))
-        for idx, prop in enumerate(scale_names):
-            scales[:, idx] = np.asarray(elem[prop])
-        rot_names = sorted([p.name for p in properties if p.name.startswith('rot_')], key=sort_fn)
-        rots = np.zeros((xyz.shape[0], len(rot_names)))
-        for idx, prop in enumerate(rot_names):
-            rots[:, idx] = np.asarray(elem[prop])
-        features_dc = np.zeros((xyz.shape[0], 3, 1))
-        for i in range(3):
-            features_dc[:, i, 0] = np.asarray(elem[f'f_dc_{i}'])
-        extra_f_names = sorted([p.name for p in properties if p.name.startswith('f_rest_')], key=sort_fn)
-        assert len(extra_f_names) == 3 * (self.max_sh_degree + 1) ** 2 - 3
-        features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
-        for idx, prop in enumerate(extra_f_names):
-            features_extra[:, idx] = np.asarray(elem[prop])
-        # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
-        features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
-        opacities = np.asarray(elem['opacity'])[..., np.newaxis]
         importances = np.asarray(elem['importance'])[..., np.newaxis]
+        self._importance = nn.Parameter(torch.tensor(importances, dtype=torch.float, device='cuda'), requires_grad=True)
 
-        self._xyz           = nn.Parameter(torch.tensor(xyz,            dtype=torch.float, device='cuda'), requires_grad=True)
-        self._scaling       = nn.Parameter(torch.tensor(scales,         dtype=torch.float, device='cuda'), requires_grad=True)
-        self._rotation      = nn.Parameter(torch.tensor(rots,           dtype=torch.float, device='cuda'), requires_grad=True)
-        self._features_dc   = nn.Parameter(torch.tensor(features_dc,    dtype=torch.float, device='cuda').transpose(1, 2).contiguous(), requires_grad=True)
-        self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device='cuda').transpose(1, 2).contiguous(), requires_grad=True)
-        self._opacity       = nn.Parameter(torch.tensor(opacities,      dtype=torch.float, device='cuda'), requires_grad=True)
-        self._importance    = nn.Parameter(torch.tensor(importances,    dtype=torch.float, device='cuda'), requires_grad=True)
-
-        self.cur_sh_degree = self.max_sh_degree     # assume optimization completed
-
-    def save_ply(self, path:str):
-        xyz          = self._xyz          .detach().cpu().numpy()
-        scaling      = self._scaling      .detach().cpu().numpy()
-        rotation     = self._rotation     .detach().cpu().numpy()
-        feature_dc   = self._features_dc  .detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        feature_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities    = self._opacity      .detach().cpu().numpy()
-        importances  = self._importance   .detach().cpu().numpy()
-
-        property_names =  [
-            'x', 'y', 'z',
-            # All channels except the 3 DC
-            *[f'scale_{i}' for i in range(self._scaling.shape[1])],
-            *[f'rot_{i}' for i in range(self._rotation.shape[1])],
-            *[f'f_dc_{i}' for i in range(self._features_dc.shape[1]*self._features_dc.shape[2])],
-            *[f'f_rest_{i}' for i in range(self._features_rest.shape[1]*self._features_rest.shape[2])],
-            'opacity',
+    def save_ply(self) -> Tuple[List[ndarray], List[str]]:
+        property_data, property_names = super().save_ply()
+        property_data.extend([
+            self._importance.detach().cpu().numpy(),
+        ])
+        property_names.extend([
             'importance',
-        ]
-        vertexes = np.empty(xyz.shape[0], dtype=[(prop, 'f4') for prop in property_names])
-        properties = np.concatenate((xyz, scaling, rotation, feature_dc, feature_rest, opacities, importances), axis=1)
-        vertexes[:] = list(map(tuple, properties))
-        elem = PlyElement.describe(vertexes, 'vertex')
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        PlyData([elem]).write(path)
+        ])
+        return property_data, property_names
 
-    ''' optimize '''
-
-    def setup_training(self):
+    def make_param_group(self) -> List[Dict[str, Any]]:
         hp = self.hp
-        param_groups = [
-            {'name': 'xyz',        'params': [self._xyz],           'lr': hp.position_lr_init * self.spatial_lr_scale},
-            {'name': 'scaling',    'params': [self._scaling],       'lr': hp.scaling_lr},
-            {'name': 'rotation',   'params': [self._rotation],      'lr': hp.rotation_lr},
-            {'name': 'f_dc',       'params': [self._features_dc],   'lr': hp.feature_lr},
-            {'name': 'f_rest',     'params': [self._features_rest], 'lr': hp.feature_lr / 20.0},
-            {'name': 'opacity',    'params': [self._opacity],       'lr': hp.opacity_lr},
-            {'name': 'importance', 'params': [self._importance],    'lr': hp.importance_lr},
-        ]
-        self.optimizer = torch.optim.Adam(param_groups, lr=0.0, eps=1e-15)
-        self.xyz_scheduler = get_expon_lr_func(
-            lr_init=hp.position_lr_init * self.spatial_lr_scale,
-            lr_final=hp.position_lr_final * self.spatial_lr_scale,
-            lr_delay_mult=hp.position_lr_delay_mult,
-            max_steps=hp.position_lr_max_steps,
-        )
-        self.xyz_grad_accum = torch.zeros((self.xyz.shape[0], 1), dtype=torch.float, device='cuda')
-        self.xyz_grad_count = torch.zeros((self.xyz.shape[0], 1), dtype=torch.int,   device='cuda')
-        self.max_radii2D    = torch.zeros((self.xyz.shape[0]),    dtype=torch.int,   device='cuda')
-        self.percent_dense = hp.percent_dense
-
+        param_group = super().make_param_group()
+        param_group.extend([
+            {'name': 'importance', 'params': [self._importance], 'lr': hp.importance_lr},
+        ])
+        return param_group
+    
     def prune_points(self, mask:Tensor):
         valid_points_mask = ~mask
         optimizable_tensors = self.prune_optimizer(valid_points_mask)

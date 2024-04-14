@@ -110,7 +110,7 @@ def train(args:Namespace, hp:HyperParams):
                     for idx, viewpoint in enumerate(cameras):
                         render_pkg = render(gaussians, viewpoint, scene.background)
                         rendered = torch.clamp(render_pkg['render'], 0.0, 1.0)
-                        gt = viewpoint.image.to('cuda')
+                        gt = viewpoint.image.cuda()
                         if idx < 5:
                             sw.add_images(f'{split}_view_{viewpoint.image_name}/render', rendered, global_step=steps, dataformats='CHW')
                             if steps == hp.test_iterations[0]:

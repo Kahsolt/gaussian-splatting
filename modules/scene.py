@@ -19,14 +19,16 @@ from typing import List, Dict, Any
 
 import torch
 from torch import Tensor
+import numpy as np
+from numpy import ndarray
+from plyfile import PlyData, PlyElement
 
 from modules.data import SCENE_DATA_LOADERS
 from modules.camera import Camera, load_camera
-from modules.model import GaussianModel_Neural
+from modules.model import GaussianModel, GaussianModel_Neural
 
 try:  # only for annotation use, avoid cyclic import error :(
     from modules.hparam import HyperParams
-    from modules.morphs import GaussianModel
 except ImportError: pass
 
 
@@ -60,6 +62,14 @@ class Scene:
             raise TypeError(f'Could not recognize scene type for dataset {hp.source_path}')
         self.scene_info = scene_info
 
+        # Init emebddings
+        if isinstance(self.gaussians, GaussianModel_Neural):
+            self.gaussians.init_embeddings(len(scene_info.train_cameras))
+        # Setup spatial_lr_scale
+        self.cameras_extent: float = scene_info.nerf_normalization['radius']
+        print('>> cameras_extent:', self.cameras_extent)
+        self.gaussians.spatial_lr_scale = self.cameras_extent
+
         # Init gaussians
         load_iter = hp.load_iter
         if load_iter is not None and load_iter < 0:
@@ -80,14 +90,6 @@ class Scene:
             print(f'>> [gaussian] init via load_ply at iteration-{load_iter}')
             self.load_gaussian(load_iter)
 
-        if isinstance(self.gaussians, GaussianModel_Neural):
-            self.gaussians.init_embeddings(len(scene_info.train_cameras))
-
-        # FIXME: monkey patch init spatial_lr_scale
-        self.cameras_extent: float = scene_info.nerf_normalization['radius']
-        print('>> cameras_extent:', self.cameras_extent)
-        self.gaussians.spatial_lr_scale = self.cameras_extent
-
         # Init cameras
         self.process_cameras()
 
@@ -95,12 +97,13 @@ class Scene:
     def model_path(self) -> Path: return Path(self.hp.model_path)
 
     def process_cameras(self):
+        limit = self.hp.limit
         resolution = self.hp.resolution
         for res in self.resolution_scales:
             print('Loading Train Cameras')
-            self.train_cameras[res] = [load_camera(resolution, id, cam, res) for id, cam in enumerate(self.scene_info.train_cameras)]
+            self.train_cameras[res] = [load_camera(resolution, id, cam, res) for id, cam in enumerate(self.scene_info.train_cameras) if id < limit]
             print('Loading Test Cameras')
-            self.test_cameras[res] = [load_camera(resolution, id, cam, res) for id, cam in enumerate(self.scene_info.test_cameras)]
+            self.test_cameras[res] = [load_camera(resolution, id, cam, res) for id, cam in enumerate(self.scene_info.test_cameras) if id < limit]
 
     @classmethod
     def random_background(cls) -> Tensor:
@@ -112,16 +115,26 @@ class Scene:
     def get_test_cameras(self, scale:float=1.0) -> List[Camera]:
         return self.test_cameras[scale]
 
+    def _save_ply(self, fp:Path, property_data:List[ndarray], property_names:List[str]):
+        vertexes = np.empty(property_data[0].shape[0], dtype=[(prop, 'f4') for prop in property_names])
+        properties = np.concatenate(property_data, axis=1)
+        vertexes[:] = list(map(tuple, properties))
+        elem = PlyElement.describe(vertexes, 'vertex')
+        PlyData([elem]).write(fp)
+
+    def _load_ply(self, fp:Path) -> PlyElement:
+        return PlyData.read(fp).elements[0]
+
     def save_gaussian(self, steps:int):
         base_dir = self.model_path / 'point_cloud' / f'iteration_{steps}'
-        self.gaussians.save_ply(base_dir / 'point_cloud.ply')
+        base_dir.mkdir(exist_ok=True, parents=True)
+        self._save_ply(base_dir / 'point_cloud.ply', *self.gaussians.save_ply())
         if isinstance(self.gaussians, GaussianModel_Neural):
             self.gaussians.save_pth(base_dir / 'model.pth')
 
     def load_gaussian(self, steps:int):
         base_dir = self.model_path / 'point_cloud' / f'iteration_{steps}'
-        self.gaussians.load_ply(base_dir / 'point_cloud.ply')
-        # FIXME: monkey patch for neural GaussianModel_neural
+        self.gaussians.load_ply(self._load_ply(base_dir / 'point_cloud.ply'))
         if isinstance(self.gaussians, GaussianModel_Neural):
             self.gaussians.load_pth(base_dir / 'model.pth')
 

@@ -28,9 +28,6 @@ def np_to_pil(im:npimg) -> PILImage:
 def pil_to_np(img:PILImage) -> npimg:
     return np.asarray(img, dtype=np.float32)
 
-def imread(fp:str, mode='RGBA') -> npimg:
-    return pil_to_np(Image.open(fp).convert(mode))
-
 
 def split_and_fft(im:npimg) -> List[spec]:
     ''' split image to grey layers, then apply fft2d '''
@@ -43,15 +40,18 @@ def ifft_and_merge(freqs_dft:List[List[spec]]) -> List[npimg]:
     return [np.stack([*layers], axis=-1) for layers in zip(*back)]    # [H, W, C]
 
 def split_freqs(im:npimg, n_bands:int=4, scale_w:float=0.1, kind='cumulative') -> List[npimg]:
-    ''' scale_w: smaller value close to log, larger value close to linear '''
+    '''
+    im: float32, vrng 0.0 ~ 255.0
+    scale_w: smaller value close to log, larger value close to linear '''
+    ''''''
 
     M = split_and_fft(im)
     H, W = im.shape[:-1]
 
     cp_l_h = np.linspace(0, H // 2, n_bands + 1)
     cp_l_w = np.linspace(0, W // 2, n_bands + 1)
-    cp_m_h = np.exp(np.linspace(0, np.log(H) // 2 + 1, n_bands+1)) - 1
-    cp_m_w = np.exp(np.linspace(0, np.log(W) // 2 + 1, n_bands+1)) - 1
+    cp_m_h = np.exp(np.linspace(0, np.log(H) // 2 + 1, n_bands + 1)) - 1
+    cp_m_w = np.exp(np.linspace(0, np.log(W) // 2 + 1, n_bands + 1)) - 1
     cp_h = cp_l_h * scale_w + cp_m_h * (1 - scale_w)
     cp_w = cp_l_w * scale_w + cp_m_w * (1 - scale_w)
     cp_h = np.clip(np.round(cp_h).astype(int), 0, None).tolist()
@@ -70,10 +70,37 @@ def split_freqs(im:npimg, n_bands:int=4, scale_w:float=0.1, kind='cumulative') -
         return M_hat
 
     if kind == 'addictive':
+        # [gt, low, mid, ..., high]
         M_bands = [[layer] + [get_band(layer, cp_h[i+1], cp_w[i+1], cp_h[i], cp_w[i]) for i in range(len(cp_h)-1)]  for layer in M]
-    elif kind == 'cumulative': 
+    elif kind == 'cumulative':
+        # [low, low+mid, ..., gt]
         M_bands = [[get_band(layer, cp_h[i+1], cp_w[i+1]) for i in range(len(cp_h)-1)] + [layer] for layer in M]
-    else: 
+    else:
         raise ValueError(f'unknown kind: {kind}')
     
     return ifft_and_merge(M_bands)
+
+
+if __name__ == '__main__':
+    import torch 
+    from torchvision.utils import make_grid
+    import matplotlib.pyplot as plt
+    from modules.utils.general_utils import DATA_PATH
+    from .hparam import HyperParams
+    hp = HyperParams()
+
+    compose = lambda imgs: make_grid(torch.from_numpy(np.stack(imgs, axis=0)).permute(0, 3, 1, 2).clamp_(0, 255).div_(255)).permute(1, 2, 0).cpu().numpy()
+
+    kind = 'cumulative'
+    fp = DATA_PATH / 'tandt' / 'train' / 'images' / '00001.jpg'
+    img = Image.open(fp).convert('RGB')
+    im = pil_to_np(img)
+    plt.subplot(211)
+    plt.imshow(compose(split_freqs(im, hp.L_freq, hp.scale_w, 'addictive')))
+    plt.axis('off')
+    plt.title('addictive')
+    plt.subplot(212)
+    plt.imshow(compose(split_freqs(im, hp.L_freq, hp.scale_w, 'cumulative')))
+    plt.axis('off')
+    plt.title('cumulative')
+    plt.show()

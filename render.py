@@ -33,13 +33,14 @@ if __name__ == '__main__':
     if 'recover -M/--morph at training':
         tmp_parser = ArgumentParser()
         tmp_hp = HyperParams()
-        tmp_hp.send_to(tmp_parser, fill_default=False)
-        tmp_args = get_combined_args(tmp_parser)
+        tmp_hp.send_to(tmp_parser)
+        tmp_cmd_args, _ = tmp_parser.parse_known_args()
+        tmp_args = get_combined_args(tmp_cmd_args, tmp_hp)
         tmp_hp.extract_from(tmp_args)
         morph = tmp_hp.morph
         print('>> morph:', morph)
         # avoid name pollution
-        del tmp_parser, tmp_args, tmp_hp
+        del tmp_parser, tmp_cmd_args, tmp_args, tmp_hp
 
     # Resolve real implemetations
     try:
@@ -64,8 +65,9 @@ if __name__ == '__main__':
 
     # Go on routine
     hp = HyperParams_cls()
-    hp.send_to(parser, fill_default=False)
-    args = get_combined_args(parser)
+    hp.send_to(parser)
+    cmd_args, _ = parser.parse_known_args()
+    args = get_combined_args(cmd_args, hp)
     hp.extract_from(args)
     print('Rendering:', hp.model_path)
 

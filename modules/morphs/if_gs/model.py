@@ -36,21 +36,20 @@ class MutilFreqGaussianModel:
         return len(self.gaussians)
 
     @property
-    def cur_gaussians(self):
+    def cur_gaussian(self):
         return self.gaussians[self.cur_idx]
 
-    def get_gaussians(self, idx:int):
+    def get_gaussian(self, idx:int):
         return self.gaussians[idx]
 
-    def activate_gaussian(self, idx:int=0) -> SingleFreqGaussianModel:
+    def activate_gaussian(self, idx:int=0):
         last_idx = self.cur_idx
-        if last_idx == last_idx:
+        if idx == last_idx:
             self.gaussians[self.cur_idx].cuda()
-            return self.cur_gaussians
-        self.cur_idx = idx
-        self.gaussians[last_idx].cpu()
-        self.gaussians[self.cur_idx].cuda()
-        return self.cur_gaussians
+        else:
+            self.cur_idx = idx
+            self.gaussians[last_idx].cpu()
+            self.gaussians[self.cur_idx].cuda()
 
     def from_pcd(self, pcd:BasicPointCloud):
         hp = self.hp
@@ -66,7 +65,7 @@ class MutilFreqGaussianModel:
 
         if hp.mutil_method == 'copy':
             for idx in range(hp.L_freq):
-                gaussians = self.get_gaussians(idx)
+                gaussians = self.get_gaussian(idx)
                 gaussians.spatial_lr_scale = self.spatial_lr_scale
                 gaussians._xyz      = nn.Parameter(init_xyz,      requires_grad=True)
                 gaussians._scaling  = nn.Parameter(init_scaling,  requires_grad=True)
@@ -76,7 +75,7 @@ class MutilFreqGaussianModel:
                 print(f'Number of points of freq_{idx} at initialization:', gaussians.n_points)
         elif hp.mutil_method == 'uniform_sparse':
             for idx in range(hp.L_freq):
-                gaussians = self.get_gaussians(idx)
+                gaussians = self.get_gaussian(idx)
                 gaussians.spatial_lr_scale = self.spatial_lr_scale
                 gaussians._xyz      = nn.Parameter(init_xyz     [idx::hp.L_freq], requires_grad=True)
                 gaussians._scaling  = nn.Parameter(init_scaling [idx::hp.L_freq], requires_grad=True)

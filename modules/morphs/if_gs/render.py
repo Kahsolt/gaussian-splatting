@@ -112,19 +112,19 @@ def render_set(scene:Scene, split:str):
     render_path.mkdir(exist_ok=True)
     gts_path.mkdir(exist_ok=True)
 
-    multifreq_gaussians: MutilFreqGaussianModel = scene.multifreq_gaussians
+    multifreq_gaussians: MutilFreqGaussianModel = scene.gaussians
     views: List[Camera] = getattr(scene, f'get_{split}_cameras')()
-    for img_idx, view in enumerate(tqdm(views, desc='Rendering progress')):
-        for idx in range(multifreq_gaussians.n_gaussians):
-            scene.activate_gaussian(idx)
-            gaussians: SingleFreqGaussianModel = scene.cur_gaussians
+    for idx, view in enumerate(tqdm(views, desc='Rendering progress')):
+        for freq_idx in range(multifreq_gaussians.n_gaussians):
+            scene.activate_gaussian(freq_idx)
+            gaussians: SingleFreqGaussianModel = scene.cur_gaussian
             render_pkg = render(gaussians, view, scene.background)
             rendered = render_pkg['render']
-            gt = view.images[idx+1][0:3, ...].cuda()
+            gt = view.image(freq_idx)[0:3, ...].cuda()
 
-            render_freq_path = render_path / f'freq_{idx}'
-            gts_freq_path = gts_path / f'freq_{idx}'
+            render_freq_path = render_path / f'freq_{freq_idx}'
+            gts_freq_path = gts_path / f'freq_{freq_idx}'
             render_freq_path.mkdir(exist_ok=True)
             gts_freq_path.mkdir(exist_ok=True)
-            save_image(rendered, render_freq_path / f'{img_idx:05d}.png')
-            save_image(gt, gts_freq_path / f'{img_idx:05d}.png')
+            save_image(rendered, render_freq_path / f'{idx:05d}.png')
+            save_image(gt, gts_freq_path / f'{idx:05d}.png')

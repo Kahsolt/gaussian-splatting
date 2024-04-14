@@ -113,6 +113,7 @@ def render_set(scene:Scene, split:str):
     gts_path.mkdir(exist_ok=True)
 
     gaussians: GaussianModel = scene.gaussians
+    gaussians.cuda()
     views: List[Camera] = getattr(scene, f'get_{split}_cameras')()
     for idx, view in enumerate(tqdm(views, desc='Rendering progress')):
         render_pkg = render(gaussians, view, scene.background)

@@ -10,16 +10,15 @@
 #
 
 from argparse import Namespace
-from modules.hparam import HyperParams as HyperParamsBase
+from modules.hparam import HyperParams_SH
 
 
-class HyperParams(HyperParamsBase):
+class HyperParams(HyperParams_SH):
 
     def __init__(self):
         super().__init__()
 
         ''' Model '''
-        self.sh_degree = 3
         self.sanitize_init_pcd = False
         self.sanitize_load_gauss = False
 
@@ -33,7 +32,6 @@ class HyperParams(HyperParamsBase):
         self.nerfw_loss = False
 
         ''' Pipeline '''
-        self.rasterizer = 'ours'
         self.convert_SHs_python = False
 
     def extract_from(self, args: Namespace):

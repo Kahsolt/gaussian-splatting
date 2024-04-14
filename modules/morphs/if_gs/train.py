@@ -39,7 +39,7 @@ def network_gui_handle(render_func:Callable, scene:Scene, steps:int):
             net_image_bytes = None
             custom_cam, do_training, _, hp.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
             if custom_cam != None:
-                rendered = render_func(scene.cur_gaussians, custom_cam, scene.background, scaling_modifer)['render']
+                rendered = render_func(scene.cur_gaussian, custom_cam, scene.background, scaling_modifer)['render']
                 net_image_bytes = memoryview((torch.clamp(rendered, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
             network_gui.send(net_image_bytes, hp.source_path)
             if do_training and (steps < int(hp.iterations) or not keep_alive):
@@ -59,9 +59,9 @@ def train(args:Namespace, hp:HyperParams):
 
     ''' Model '''
     scene = Scene(hp)
-    for idx in range(hp.L_freq):
-        scene.activate_gaussian(idx)
-        gaussians: SingleFreqGaussianModel = scene.cur_gaussians
+    for freq_idx in scene.all_gaussians.keys():
+        scene.activate_gaussian(freq_idx)
+        gaussians: SingleFreqGaussianModel = scene.cur_gaussian
         gaussians.setup_training()
         if hp.load: start_steps = scene.load_checkpoint(hp.load)
 
@@ -93,8 +93,7 @@ def train(args:Namespace, hp:HyperParams):
             radii = render_pkg['radii']                         # [P=182686], int32
 
             # Loss
-            breakpoint()
-            gt_image = viewpoint_cam.images[idx+1].cuda()
+            gt_image = viewpoint_cam.image(freq_idx).cuda()
             Ll1 = l1_loss(image, gt_image)
             Lssim = ssim(image, gt_image)
             loss: Tensor = (1.0 - hp.lambda_dssim) * Ll1 + hp.lambda_dssim * (1.0 - Lssim)
@@ -113,10 +112,10 @@ def train(args:Namespace, hp:HyperParams):
 
                 # Peep middle results
                 if steps % 100 == 0:
-                    save_dir = Path(scene.model_path) / 'look_up'
+                    save_dir = Path(scene.model_path) / 'look_up' / f'freq_{freq_idx}'
                     save_dir.mkdir(exist_ok=True, parents=True)
                     rendered_cat = torch.cat([image, gt_image], -1)
-                    save_image(rendered_cat, save_dir / f'{steps:05d}-{viewpoint_cam.uid}-freq_{idx}.png')
+                    save_image(rendered_cat, save_dir / f'{steps:05d}-{viewpoint_cam.uid}.png')
 
                 # Log and save
                 sw.add_scalar('train_loss_patches/l1_loss', Ll1.mean().item(), global_step=steps)
@@ -139,7 +138,7 @@ def train(args:Namespace, hp:HyperParams):
                         for idx, viewpoint in enumerate(cameras):
                             render_pkg = render(gaussians, viewpoint, scene.background)
                             rendered = torch.clamp(render_pkg['render'], 0.0, 1.0)
-                            gt = viewpoint.images[idx+1].to('cuda')
+                            gt = viewpoint.image(freq_idx).cuda()
                             if idx < 5:
                                 sw.add_images(f'{split}_view_{viewpoint.image_name}/render', rendered, global_step=steps, dataformats='CHW')
                                 if steps == hp.test_iterations[0]:

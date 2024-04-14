@@ -20,7 +20,6 @@ from tqdm import tqdm
 
 from modules.scene import Scene, Camera
 
-from .hparam import HyperParams
 from .model import GaussianModel
 
 # (v_sun * S_sun + S_env) * R
@@ -122,6 +121,7 @@ def render_set(scene:Scene, split:str):
     de_render_path.mkdir(exist_ok=True)
 
     gaussians: GaussianModel = scene.gaussians
+    gaussians.cuda()
     views: List[Camera] = getattr(scene, f'get_{split}_cameras')()
     for idx, view in enumerate(tqdm(views, desc='Rendering progress')):
         render_pkg = render(gaussians, view, scene.background)

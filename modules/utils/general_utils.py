@@ -11,6 +11,7 @@
 
 import sys
 import random
+from pathlib import Path
 from datetime import datetime
 from typing import Tuple
 
@@ -18,6 +19,8 @@ import torch
 from torch import Tensor
 import numpy as np
 
+BASE_PATH = Path(__file__).parent.parent.parent
+DATA_PATH = BASE_PATH / 'data'
 
 RASTERIZER_PROVIDERS = [
     'original',

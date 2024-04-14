@@ -11,14 +11,15 @@
 
 import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Tuple, Dict, Any
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import Parameter
-from plyfile import PlyData, PlyElement, PlyProperty
+from plyfile import PlyElement
 import numpy as np
+from numpy import ndarray
 from simple_knn._C import distCUDA2
 
 from modules.data import BasicPointCloud
@@ -182,61 +183,21 @@ class GaussianModel(GaussianModel_Neural):
         self._opacity    = nn.Parameter(opacities, requires_grad=True)
         self._importance = nn.Parameter(importances, requires_grad=True)
 
-    def load_ply(self, path:str):
-        plydata = PlyData.read(path)
-        elem: PlyElement = plydata.elements[0]
-        properties: List[PlyProperty] = elem.properties
-        sort_fn = lambda x: int(x.split('_')[-1])
+    def load_ply(self, elem:PlyElement):
+        super().load_ply(elem)
 
-        xyz = np.stack((np.asarray(elem['x']), np.asarray(elem['y']), np.asarray(elem['z'])), axis=1)
-        scale_names = sorted([p.name for p in properties if p.name.startswith('scale_')], key=sort_fn)
-        scales = np.zeros((xyz.shape[0], len(scale_names)))
-        for idx, prop in enumerate(scale_names):
-            scales[:, idx] = np.asarray(elem[prop])
-        rot_names = sorted([p.name for p in properties if p.name.startswith('rot_')], key=sort_fn)
-        rots = np.zeros((xyz.shape[0], len(rot_names)))
-        for idx, prop in enumerate(rot_names):
-            rots[:, idx] = np.asarray(elem[prop])
-        features = np.zeros((xyz.shape[0], self.hp.feat_dim))
-        feat_names = sorted([p.name for p in properties if p.name.startswith('feat_')], key=sort_fn)
-        assert len(feat_names) == self.hp.feat_dim
-        for idx, prop in enumerate(feat_names):
-            features[:, idx] = np.asarray(elem[prop])
-        opacities = np.asarray(elem['opacity'])[..., np.newaxis]
         importances = np.asarray(elem["importance"])[..., np.newaxis]
-
-        self._xyz        = nn.Parameter(torch.tensor(xyz,         dtype=torch.float, device='cuda'), requires_grad=True)
-        self._scaling    = nn.Parameter(torch.tensor(scales,      dtype=torch.float, device='cuda'), requires_grad=True)
-        self._rotation   = nn.Parameter(torch.tensor(rots,        dtype=torch.float, device='cuda'), requires_grad=True)
-        self._features   = nn.Parameter(torch.tensor(features,    dtype=torch.float, device='cuda'), requires_grad=True)
-        self._opacity    = nn.Parameter(torch.tensor(opacities,   dtype=torch.float, device='cuda'), requires_grad=True)
         self._importance = nn.Parameter(torch.tensor(importances, dtype=torch.float, device="cuda"), requires_grad=True)
 
-    def save_ply(self, path:str):
-        xyz         = self._xyz       .detach().cpu().numpy()
-        scaling     = self._scaling   .detach().cpu().numpy()
-        rotation    = self._rotation  .detach().cpu().numpy()
-        features    = self._features  .detach().cpu().numpy()
-        opacities   = self._opacity   .detach().cpu().numpy()
-        importances = self._importance.detach().cpu().numpy()
-
-        property_names =  [
-            'x', 'y', 'z',
-            # All channels except the 3 DC
-            *[f'scale_{i}' for i in range(self._scaling.shape[1])],
-            *[f'rot_{i}'   for i in range(self._rotation.shape[1])],
-            *[f'feat_{i}'  for i in range(self._features.shape[1])],
-            'opacity',
+    def save_ply(self) -> Tuple[List[ndarray], List[str]]:
+        property_data, property_names = super().save_ply()
+        property_data.extend([
+            self._importance.detach().cpu().numpy(),
+        ])
+        property_names.extend([
             'importance',
-        ]
-        vertexes = np.empty(xyz.shape[0], dtype=[(prop, 'f4') for prop in property_names])
-        properties = np.concatenate((xyz, scaling, rotation, features, opacities, importances), axis=1)
-        vertexes[:] = list(map(tuple, properties))
-        elem = PlyElement.describe(vertexes, 'vertex')
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        PlyData([elem]).write(path)
-
-    ''' optimize '''
+        ])
+        return property_data, property_names   
 
     def setup_training(self):
         hp = self.hp
@@ -287,26 +248,6 @@ class GaussianModel(GaussianModel_Neural):
                 lr = self.occlusion_scheduler_args(steps)
             else: continue  # skip
             param_group['lr'] = lr
-
-    def cat_tensors_to_optimizer(self, tensors_dict:Dict[str, Tensor]) -> Dict[str, Tensor]:
-        optimizable_tensors = {}
-        for group in self.optimizer.param_groups:
-            if group['name'].startswith('mlp') or group['name'].startswith('embedding'): continue
-            assert len(group['params']) == 1
-            extension_tensor = tensors_dict[group['name']]
-            stored_state = self.optimizer.state.get(group['params'][0], None)
-            if stored_state is not None:
-                stored_state['exp_avg'] = torch.cat((stored_state['exp_avg'], torch.zeros_like(extension_tensor)), dim=0)
-                stored_state['exp_avg_sq'] = torch.cat((stored_state['exp_avg_sq'], torch.zeros_like(extension_tensor)), dim=0)
-
-                del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor), dim=0), requires_grad=True)
-                self.optimizer.state[group['params'][0]] = stored_state
-                optimizable_tensors[group['name']] = group['params'][0]
-            else:
-                group['params'][0] = nn.Parameter(torch.cat((group['params'][0], extension_tensor), dim=0), requires_grad=True)
-                optimizable_tensors[group['name']] = group['params'][0]
-        return optimizable_tensors
 
     def prune_optimizer(self, mask:Tensor) -> Dict[str, Tensor]:
         optimizable_tensors = {}

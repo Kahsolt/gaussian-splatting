@@ -21,16 +21,17 @@ from modules.data import CameraInfo
 from modules.utils.graphics_utils import getWorld2View2, getProjectionMatrix
 
 from .hparam import HyperParams
-from .image_utils import split_freqs, pil_to_np
+from .image_utils import split_freqs
 
 WARNED = False
 
 
 class Camera:
 
-    def __init__(self, uid:int, colmap_id:int, R:ndarray, T:ndarray, FoVx:float, FoVy:float, 
+    def __init__(self, hp:HyperParams, uid:int, colmap_id:int, R:ndarray, T:ndarray, FoVx:float, FoVy:float, 
                  images:List[Tensor], mask:Tensor=None, image_name:str=None, trans:ndarray=np.zeros([3]), scale:float=1.0,
                  data_device:str='cuda'):
+        self.hp = hp
         self.uid = uid
         self.colmap_id = colmap_id
 
@@ -58,11 +59,15 @@ class Camera:
         self.image_height = self.images[0].shape[1]
         self.image_width = self.images[0].shape[2]
 
+    def image(self, idx:int):
+        return self.images[idx + (1 if self.hp.split_kind == 'addictive' else 0)]
+
 
 def PILtoTorch(img:PILImage, resize:Tuple[int, int]=None, hp:HyperParams=None) -> List[Tensor]:
     assert hp is not None
     if resize: img = img.resize(resize)
-    n_freq_img = split_freqs(pil_to_np(img), n_bands=hp.L_freq, scale_w=hp.scale_w, kind=hp.split_kind)
+    # vrng: 0 ~ 255
+    n_freq_img = split_freqs(np.asarray(img, dtype=np.float32), n_bands=hp.L_freq, scale_w=hp.scale_w, kind=hp.split_kind)
     Xs: Tensor = [torch.from_numpy(np.array(img)) / 255.0 for img in n_freq_img]
     if img.mode == 'L': Xs = [X.unsqueeze(dim=-1) for X in Xs]
     return [X.permute(2, 0, 1) for X in Xs]
@@ -98,6 +103,7 @@ def load_camera(hp:HyperParams, id:int, cam_info:CameraInfo, resolution_scale:fl
         loaded_mask = resized_image_rgb[0][3:4, ...]
 
     return Camera(
+        hp=hp,
         uid=id, colmap_id=cam_info.uid, 
         R=cam_info.R, T=cam_info.T, FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
         images=gt_images, mask=loaded_mask, image_name=cam_info.image_name, 

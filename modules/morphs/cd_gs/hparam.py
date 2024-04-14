@@ -10,10 +10,10 @@
 #
 
 from argparse import Namespace
-from modules.hparam import HyperParams as HyperParamsBase
+from modules.hparam import HyperParams_Neural
 
 
-class HyperParams(HyperParamsBase):
+class HyperParams(HyperParams_Neural):
 
     def __init__(self):
         super().__init__()

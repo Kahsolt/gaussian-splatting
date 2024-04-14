@@ -9,16 +9,9 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-from modules.hparam import HyperParams as HyperParamsBase
+from modules.hparam import HyperParams_SH
 
 
-class HyperParams(HyperParamsBase):
+class HyperParams(HyperParams_SH):
 
-    def __init__(self):
-        super().__init__()
-
-        ''' Model '''
-        self.sh_degree = 3
-
-        ''' Pipeline '''
-        self.convert_SHs_python = False
+    pass

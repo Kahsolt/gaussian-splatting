@@ -17,7 +17,6 @@ from argparse import ArgumentParser, Namespace
 from typing import Callable, Any
 
 
-# priority: cmdline args > saved/reloaded hparams.json > defaults
 class HyperParams:
 
     # initila letter must be unique ↓↓↓
@@ -37,6 +36,7 @@ class HyperParams:
         ''' Data '''
         self.source_path = 'data/tandt/train'
         self.images = 'images'
+        self.limit = 99999          # limit sample count
         self.eval = False           # split train/test
         self.resolution = -1
 
@@ -79,12 +79,12 @@ class HyperParams:
     def __setattr__(self, name:str, value:Any):
         self.__dict__[name] = value
 
-    def send_to(self, parser:ArgumentParser, fill_default:bool=True):
+    def send_to(self, parser:ArgumentParser):
         for key, val in vars(self).items():
             if isinstance(val, Callable): continue
             if key in ['morph']: continue
             args = (f'--{key}',) + ((f'-{key[0]}',) if key in self.SHORT_HANDS else tuple())
-            kwargs = {'default': val} if fill_default else {}
+            kwargs = {'default': val}
             tval = type(val)
             if tval == bool:
                 kwargs.update({'action': 'store_true'})
@@ -119,24 +119,46 @@ class HyperParams:
             self.model_path = os.path.join('output', exp_name)
 
 
-def get_combined_args(parser:ArgumentParser) -> Namespace:
-    cmdline_string = sys.argv[1:]
-    cfgfile_string = 'Namespace()'
-    args_cmdline, _ = parser.parse_known_args(cmdline_string)
+class HyperParams_SH(HyperParams):
 
+    def __init__(self):
+        super().__init__()
+
+        ''' Model '''
+        self.sh_degree = 3
+
+        ''' Pipeline '''
+        self.convert_SHs_python = False
+
+
+class HyperParams_Neural(HyperParams):
+
+    def __init__(self):
+        super().__init__()
+
+        ''' Model '''
+        self.feat_dim = 48
+
+
+# priority: cmd_args > cfg_args > default_hp
+def get_combined_args(cmd_args:ArgumentParser, default_hp:HyperParams) -> Namespace:
+    cfg_fp = os.path.join(cmd_args.model_path, 'cfg_args')
     try:
-        cfg_fp = os.path.join(args_cmdline.model_path, 'cfg_args')
-        print('Looking for config file in', cfg_fp)
-        with open(cfg_fp) as cfg_file:
-            print(f'Config file found: {cfg_fp}')
-            cfgfile_string = cfg_file.read()
-    except TypeError:
-        print('Config file not found at')
-        pass
-    args_cfgfile = eval(cfgfile_string)
+        with open(cfg_fp) as fh:
+            cfgfile_string = fh.read()
+        print(f'Load config from: {cfg_fp}')
+    except:
+        cfgfile_string = 'Namespace()'
+        print(f'[Warn] missing config file at {cfg_fp}')
+    cfg_args = eval(cfgfile_string)
 
-    merged_dict = vars(args_cfgfile).copy()
-    for k,v in vars(args_cmdline).items():
-        if v != None:
+    merged_dict = vars(default_hp).copy()
+    # cfg_args > default_hp
+    for k, v in vars(cfg_args).items():
+        if v is not None:
+            merged_dict[k] = v
+    # cmd_args > cfg_args
+    for k, v in vars(cmd_args).items():
+        if v != getattr(default_hp, k):
             merged_dict[k] = v
     return Namespace(**merged_dict)
