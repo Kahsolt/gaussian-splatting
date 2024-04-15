@@ -206,44 +206,32 @@ class GaussianModel(GaussianModel_Neural):
         ])
         return property_data, property_names   
 
-    def setup_training(self):
+    def make_param_group(self) -> List[Dict[str, Any]]:
         hp = self.hp
-        param_groups = [
-            {'name': 'xyz',        'params': [self._xyz],       'lr': hp.position_lr_init * self.spatial_lr_scale},
-            {'name': 'scaling',    'params': [self._scaling],   'lr': hp.scaling_lr},
-            {'name': 'rotation',   'params': [self._rotation],  'lr': hp.rotation_lr},
-            {'name': 'features',   'params': [self._features],  'lr': hp.feature_lr},
-            {'name': 'opacity',    'params': [self._opacity],   'lr': hp.opacity_lr},
+        param_group = super().make_param_group()
+        param_group.extend([
             {'name': 'importance', 'params': [self._importance], 'lr': hp.importance_lr},
             {'name': 'mlp_view',             'params': self.mlp_view            .parameters(), 'lr': hp.mlp_view_lr_init}   if hp.use_view_emb else None,
             {'name': 'mlp_color',            'params': self.mlp_color           .parameters(), 'lr': hp.mlp_color_lr_init},
             {'name': 'mlp_occlu',            'params': self.mlp_occlu           .parameters(), 'lr': hp.mlp_occlu_lr_init},
             {'name': 'embedding_appearance', 'params': self.embedding_appearance.parameters(), 'lr': hp.appearance_lr_init} if hp.appearance_dim > 0 else None,
             {'name': 'embedding_occlusion',  'params': self.embedding_occlusion .parameters(), 'lr': hp.occlusion_lr_init}  if hp.occlusion_dim  > 0 else None,
-        ]
-        param_groups = [it for it in param_groups if it is not None]
-        self.optimizer = torch.optim.Adam(param_groups, lr=0.0, eps=1e-15)
-        self.xyz_scheduler = get_expon_lr_func(
-            lr_init=hp.position_lr_init * self.spatial_lr_scale,
-            lr_final=hp.position_lr_final * self.spatial_lr_scale,
-            lr_delay_mult=hp.position_lr_delay_mult,
-            max_steps=hp.position_lr_max_steps,
-        )
+        ])
+        return param_group
+
+    def setup_training(self):
+        super().setup_training()
+        hp = self.hp
         self.view_scheduler_args       = get_expon_lr_func(**make_expon_lr_func_args(hp, 'mlp_view'))
         self.color_scheduler_args      = get_expon_lr_func(**make_expon_lr_func_args(hp, 'mlp_color'))
         self.occlu_scheduler_args      = get_expon_lr_func(**make_expon_lr_func_args(hp, 'mlp_occlu'))
         self.appearance_scheduler_args = get_expon_lr_func(**make_expon_lr_func_args(hp, 'appearance'))
         self.occlusion_scheduler_args  = get_expon_lr_func(**make_expon_lr_func_args(hp, 'occlusion'))
-        self.xyz_grad_accum = torch.zeros((self.xyz.shape[0], 1), dtype=torch.float, device='cuda')
-        self.xyz_grad_count = torch.zeros((self.xyz.shape[0], 1), dtype=torch.int,   device='cuda')
-        self.max_radii2D    = torch.zeros((self.xyz.shape[0]),    dtype=torch.int,   device='cuda')
-        self.percent_dense = hp.percent_dense
 
     def update_learning_rate(self, steps:int):
+        super().update_learning_rate(steps)
         for param_group in self.optimizer.param_groups:
-            if param_group['name'] == 'xyz':
-                lr = self.xyz_scheduler(steps)
-            elif param_group['name'] == 'mlp_color':
+            if param_group['name'] == 'mlp_color':
                 lr = self.color_scheduler_args(steps)
             elif param_group['name'] == 'mlp_occlu':
                 lr = self.occlu_scheduler_args(steps)
@@ -256,23 +244,11 @@ class GaussianModel(GaussianModel_Neural):
             else: continue  # skip
             param_group['lr'] = lr
 
-    def prune_optimizer(self, mask:Tensor) -> Dict[str, Tensor]:
-        optimizable_tensors = {}
-        for group in self.optimizer.param_groups:
-            if group['name'].startswith('mlp') or group['name'].startswith('embedding'): continue
-            stored_state = self.optimizer.state.get(group['params'][0], None)
-            if stored_state is not None:
-                stored_state['exp_avg'] = stored_state['exp_avg'][mask]
-                stored_state['exp_avg_sq'] = stored_state['exp_avg_sq'][mask]
+    def cat_tensors_to_optimizer(self, tensors_dict:Dict[str, Tensor], excludes:List[str]=[]) -> Dict[str, Tensor]:
+        return super().cat_tensors_to_optimizer(tensors_dict, excludes + ['mlp_*', '*embedding_*'])
 
-                del self.optimizer.state[group['params'][0]]
-                group['params'][0] = nn.Parameter(group['params'][0][mask], requires_grad=True)
-                self.optimizer.state[group['params'][0]] = stored_state
-                optimizable_tensors[group['name']] = group['params'][0]
-            else:
-                group['params'][0] = nn.Parameter(group['params'][0][mask], requires_grad=True)
-                optimizable_tensors[group['name']] = group['params'][0]
-        return optimizable_tensors
+    def prune_optimizer(self, mask:Tensor, excludes:List[str]=[]) -> Dict[str, Tensor]:
+        return super().prune_optimizer(mask, excludes + ['mlp_*', '*embedding_*'])
 
     def prune_points(self, mask:Tensor):
         valid_points_mask = ~mask
