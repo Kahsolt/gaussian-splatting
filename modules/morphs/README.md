@@ -22,4 +22,5 @@ Also, you could alway copy from the original 3D-GS implementation `morphs/gs`, a
     - cd_gs: rendered image decomposition
     - if_gs: multi-freq gaussian
     - gs_w: add gaussian importance, appearance & occlusion embedding
+    - occlu_gs: absorb occlusions in gt
   - dev: free experimental playground (still use SH)
