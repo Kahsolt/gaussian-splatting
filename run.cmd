@@ -30,6 +30,10 @@ python train.py -M cd_gs -s data\tandt\train -m output\cd_gs-train
 python train.py -M if_gs -s data\tandt\train -m output\if_gs-train
 python train.py -M gs_w -s data\tandt\train -m output\gs_w-train
 
+:vis
+python vis.py -m output\mlp_gs
+python vis_sun.py -m output\mlp_gs
+
 
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
