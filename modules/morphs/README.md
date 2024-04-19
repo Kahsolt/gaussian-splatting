@@ -20,6 +20,9 @@ Also, you could alway copy from the original 3D-GS implementation `morphs/gs`, a
 - gs: original
   - mlp_gs: replace SH with color-mlp
     - cd_gs: rendered image decomposition
+      - cd_add_gs: rendered = center (视角无关的基本色/均色) + shift (视角独立的明暗偏差)
+      - cd_mul_gs: rendered = rgb (~=视角无关的基本色/均色) * gate (视角独立的值域放缩)
+        - cd_mulx_gs: rendered = rgb (~=视角无关的基本色/均色) * gate (视角独立的值域放缩，使用独立特征)
     - if_gs: multi-freq gaussian
     - gs_w: add gaussian importance, appearance & occlusion embedding
     - occlu_gs: absorb occlusions in gt
