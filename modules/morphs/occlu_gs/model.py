@@ -41,8 +41,7 @@ class GaussianModel(GaussianModelBase):
         weight = torch.empty([num_cameras, self.hp.view_embed_dim]).normal_(mean=0, std=0.2)
         self.view_spec_embed = nn.Embedding(num_cameras, self.hp.view_embed_dim, _weight=weight)
 
-    def feature_encoder(self, camera:Camera, visible_mask:Tensor=None):
-        if visible_mask is None: visible_mask = slice(None)
+    def feature_encoder(self, camera:Camera, visible_mask:Tensor=slice(None)):
         view_feat = self.features[visible_mask]
 
         if self.hp.add_view:

@@ -62,8 +62,7 @@ class GaussianModel(GaussianModel_Neural):
         self.occlu_mlp_in_dim = 1 + hp.occlusion_dim + (self.view_emb_dim if hp.add_view_emb_to_occlu else 0)
         self.mlp_occlu = OccluMLP(self.occlu_mlp_in_dim, hp.feat_dim // 2)
 
-    def feature_encoder(self, vp_cam:Camera, visible_mask:Tensor=None):
-        if visible_mask is None: visible_mask = slice(None)
+    def feature_encoder(self, vp_cam:Camera, visible_mask:Tensor=slice(None)):
         feat = self.features[visible_mask]              # (N, 32)
         importance = self.importance[visible_mask]
 

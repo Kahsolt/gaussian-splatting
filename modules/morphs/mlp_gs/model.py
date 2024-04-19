@@ -37,8 +37,7 @@ class GaussianModel(GaussianModel_Neural):
         in_dim = self.hp.feat_dim + (4 if self.hp.add_view else 0)
         self.color_mlp = ColorMLP(in_dim, self.hp.feat_dim)
 
-    def feature_encoder(self, camera:Camera, visible_mask:Tensor=None):
-        if visible_mask is None: visible_mask = slice(None)
+    def feature_encoder(self, camera:Camera, visible_mask:Tensor=slice(None)):
         view_feat = self.features[visible_mask]
 
         if self.hp.add_view:

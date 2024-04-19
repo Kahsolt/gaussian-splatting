@@ -50,8 +50,7 @@ class GaussianModel(GaussianModel_Neural):
         self.sky_shade_color_mlp   = ColorMLP(sky_shade_dim,   hp.hidden_dim)
         self.reflectance_color_mlp = ColorMLP(reflectance_dim, hp.hidden_dim)
 
-    def feature_encoder(self, camera:Camera, visible_mask=None):
-        if visible_mask is None: visible_mask = slice(None)
+    def feature_encoder(self, camera:Camera, visible_mask=slice(None)):
         feats = self.features[visible_mask]
 
         hp = self.hp

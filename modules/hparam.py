@@ -10,11 +10,13 @@
 #
 
 import os
-import sys
 from pathlib import Path
 from datetime import datetime
 from argparse import ArgumentParser, Namespace
 from typing import Callable, Any
+
+WARN_GETATTR = False
+WARN_SETATTR = False
 
 
 class HyperParams:
@@ -74,9 +76,21 @@ class HyperParams:
         self.debug = False      # debug rasterizer
 
     def __getattr__(self, name:str) -> Any:
+        global WARN_GETATTR
+        if name not in dir(self):
+            if not WARN_GETATTR:
+                WARN_GETATTR = True
+                print('>> HyperParams.__getattr__ is deprecated and going to be removed')
+            print(f'>> calling HyperParams.__getattr__({name})')
         return self.__dict__.get(name)
 
     def __setattr__(self, name:str, value:Any):
+        global WARN_SETATTR
+        if name not in dir(self):
+            if not WARN_SETATTR:
+                WARN_SETATTR = False
+                print('>> HyperParams.__setattr__ is deprecated and going to be removed')
+            print(f'>> calling HyperParams.__setattr__({name}, {value})')
         self.__dict__[name] = value
 
     def send_to(self, parser:ArgumentParser):

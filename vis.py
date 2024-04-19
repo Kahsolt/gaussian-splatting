@@ -46,10 +46,9 @@ FIG_DPI = 400
 HIST_BINS = 48
 
 
-def GaussianModel_cd_gs_feature_encoder_hijack(self:GaussianModel_cd_gs, camera:Camera, visible_mask=None):
+def GaussianModel_cd_gs_feature_encoder_hijack(self:GaussianModel_cd_gs, camera:Camera, visible_mask=slice(None)):
   assert isinstance(camera.uid, list), f'>> failed to hijack camera.uid: {camera.uid}, should be List[int]'
 
-  if visible_mask is None: visible_mask = slice(None)
   feats = self.features[visible_mask]
 
   hp = self.hp
@@ -76,10 +75,9 @@ def GaussianModel_cd_gs_feature_encoder_hijack(self:GaussianModel_cd_gs, camera:
 GaussianModel_cd_gs.feature_encoder = GaussianModel_cd_gs_feature_encoder_hijack
 
 
-def GaussianModel_gs_w_feature_encoder_hijack(self:GaussianModel_gs_w, vp_cam:Camera, visible_mask:Tensor=None):
+def GaussianModel_gs_w_feature_encoder_hijack(self:GaussianModel_gs_w, vp_cam:Camera, visible_mask:Tensor=slice(None)):
   assert isinstance(vp_cam.uid, list), f'>> failed to hijack vp_cam.uid: {vp_cam.uid}, should be List[int]'
 
-  if visible_mask is None: visible_mask = slice(None)
   feat = self.features[visible_mask]              # (N, 32)
   importance = self.importance[visible_mask]
 
