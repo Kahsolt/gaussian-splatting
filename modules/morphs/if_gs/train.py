@@ -112,8 +112,7 @@ def train(args:Namespace, hp:HyperParams):
 
                 # Peep middle results
                 if steps % 100 == 0:
-                    save_dir = Path(scene.model_path) / 'look_up' / f'freq_{freq_idx}'
-                    save_dir.mkdir(exist_ok=True, parents=True)
+                    save_dir = mkdir(Path(scene.model_path) / 'look_up' / f'freq_{freq_idx}', parents=True)
                     rendered_cat = torch.cat([image, gt_image], -1)
                     save_image(rendered_cat, save_dir / f'{steps:05d}-{viewpoint_cam.uid}.png')
 

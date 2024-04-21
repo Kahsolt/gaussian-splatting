@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from modules.scene import Scene as SceneBase
 from modules.model import GaussianModel_Neural
+from modules.utils.general_utils import mkdir
 
 from .model import MutilFreqGaussianModel, SingleFreqGaussianModel
 from .camera import Camera, load_camera
@@ -53,8 +54,7 @@ class Scene(SceneBase):
         self.gaussians.activate_gaussian(idx)
 
     def save_gaussian(self, steps:int):
-        base_dir = self.model_path / 'point_cloud' / f'iteration_{steps}'
-        base_dir.mkdir(exist_ok=True, parents=True)
+        base_dir = mkdir(self.model_path / 'point_cloud' / f'iteration_{steps}', parents=True)
         # only save the current training one
         idx = self.gaussians.cur_idx
         gaussians = self.gaussians.cur_gaussian

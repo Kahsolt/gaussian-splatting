@@ -19,6 +19,7 @@ from torchvision.utils import save_image
 from tqdm import tqdm
 
 from modules.scene import Scene, Camera
+from modules.utils.general_utils import mkdir
 
 from .model import GaussianModel
 
@@ -104,13 +105,10 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
 
 @torch.inference_mode()
 def render_set(scene:Scene, split:str):
-    base_path = Path(scene.model_path) / split / f'ours_{scene.load_iter}'
-    base_path.mkdir(exist_ok=True, parents=True)
+    base_path = mkdir(Path(scene.model_path) / split / f'ours_{scene.load_iter}', parents=True)
 
-    render_path = base_path / 'renders'
-    gts_path = base_path / 'gt'
-    render_path.mkdir(exist_ok=True)
-    gts_path.mkdir(exist_ok=True)
+    render_path = mkdir(base_path / 'renders')
+    gts_path = mkdir(base_path / 'gt')
 
     gaussians: GaussianModel = scene.gaussians
     gaussians.cuda()

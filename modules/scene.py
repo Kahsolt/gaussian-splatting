@@ -26,6 +26,7 @@ from plyfile import PlyData, PlyElement
 from modules.data import SCENE_DATA_LOADERS
 from modules.camera import Camera, load_camera
 from modules.model import GaussianModel, GaussianModel_Neural
+from modules.utils.general_utils import mkdir
 
 try:  # only for annotation use, avoid cyclic import error :(
     from modules.hparam import HyperParams
@@ -126,8 +127,7 @@ class Scene:
         return PlyData.read(fp).elements[0]
 
     def save_gaussian(self, steps:int):
-        base_dir = self.model_path / 'point_cloud' / f'iteration_{steps}'
-        base_dir.mkdir(exist_ok=True, parents=True)
+        base_dir = mkdir(self.model_path / 'point_cloud' / f'iteration_{steps}', parents=True)
         self._save_ply(base_dir / 'point_cloud.ply', *self.gaussians.save_ply())
         if isinstance(self.gaussians, GaussianModel_Neural):
             self.gaussians.save_pth(base_dir / 'model.pth')

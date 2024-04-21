@@ -13,10 +13,9 @@ import sys
 import random
 from pathlib import Path
 from datetime import datetime
-from typing import Tuple
+from typing import Union
 
 import torch
-from torch import Tensor
 import numpy as np
 
 BASE_PATH = Path(__file__).parent.parent.parent
@@ -32,6 +31,12 @@ try:
     from diff_gaussian_rasterization_ks import ImageState
 except ImportError:
     ImageState = type(None)
+
+
+def mkdir(path: Union[str, Path], parents:bool=False) -> Path:
+    p = path if isinstance(path, Path) else Path(path)
+    p.mkdir(exist_ok=True, parents=parents)
+    return p
 
 
 def safe_state(silent:bool):

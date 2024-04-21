@@ -24,6 +24,7 @@ from modules.camera import Camera
 from modules import network_gui
 from modules.utils.loss_utils import l1_loss, ssim, psnr
 from modules.utils.training_utils import init_log
+from modules.utils.general_utils import mkdir
 
 from .hparam import HyperParams
 from .model import GaussianModel
@@ -113,8 +114,7 @@ def train(args:Namespace, hp:HyperParams):
 
             # Peep middle results
             if steps % 100 == 0:
-                save_dir = Path(scene.model_path) / 'look_up'
-                save_dir.mkdir(exist_ok=True, parents=True)
+                save_dir = mkdir(Path(scene.model_path) / 'look_up', parents=True)
                 rendered_cat = torch.cat([torch.cat(gaussians.post_reprocessing(rendered_set), -1), image, gt_image], -1)
                 save_image(rendered_cat, save_dir / f'{steps:05d}-{viewpoint_cam.uid}.png')
 

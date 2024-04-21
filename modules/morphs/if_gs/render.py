@@ -104,13 +104,10 @@ def render(pc:SingleFreqGaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_m
 
 @torch.inference_mode()
 def render_set(scene:Scene, split:str):
-    base_path = Path(scene.model_path) / split / f'ours_{scene.load_iter}'
-    base_path.mkdir(exist_ok=True, parents=True)
+    base_path = mkdir(Path(scene.model_path) / split / f'ours_{scene.load_iter}', parents=True)
 
-    render_path = base_path / 'renders'
-    gts_path = base_path / 'gt'
-    render_path.mkdir(exist_ok=True)
-    gts_path.mkdir(exist_ok=True)
+    render_path = mkdir(base_path / 'renders')
+    gts_path = mkdir(base_path / 'gt')
 
     multifreq_gaussians: MutilFreqGaussianModel = scene.gaussians
     views: List[Camera] = getattr(scene, f'get_{split}_cameras')()
@@ -122,9 +119,7 @@ def render_set(scene:Scene, split:str):
             rendered = render_pkg['render']
             gt = view.image(freq_idx)[0:3, ...].cuda()
 
-            render_freq_path = render_path / f'freq_{freq_idx}'
-            gts_freq_path = gts_path / f'freq_{freq_idx}'
-            render_freq_path.mkdir(exist_ok=True)
-            gts_freq_path.mkdir(exist_ok=True)
+            render_freq_path = mkdir(render_path / f'freq_{freq_idx}')
+            gts_freq_path = mkdir(gts_path / f'freq_{freq_idx}')
             save_image(rendered, render_freq_path / f'{idx:05d}.png')
             save_image(gt, gts_freq_path / f'{idx:05d}.png')

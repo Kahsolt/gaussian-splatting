@@ -23,13 +23,14 @@ import seaborn as sns
 from modules.scene import Scene, Camera
 from modules.utils.sh_utils import eval_sh
 from modules.utils.general_utils import ImageState
+from modules.utils.general_utils import mkdir
 
 from .hparam import HyperParams
 from .model import GaussianModel
 
 
 def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:float=1.0, override_color:Tensor=None) -> Dict[str, Tensor]:
-    hp = pc.hp
+    hp: HyperParams = pc.hp
     if hp.rasterizer == 'original':
         from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
     elif hp.rasterizer == 'depth':
@@ -126,25 +127,18 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
 
 @torch.inference_mode()
 def render_set(scene:Scene, split:str):
-    base_path = Path(scene.model_path) / split / f'ours_{scene.load_iter}'
-    base_path.mkdir(exist_ok=True, parents=True)
+    base_path = mkdir(Path(scene.model_path) / split / f'ours_{scene.load_iter}', parents=True)
 
-    render_path = base_path / 'renders'
-    gts_path = base_path / 'gt'
-    render_path.mkdir(exist_ok=True)
-    gts_path.mkdir(exist_ok=True)
+    render_path = mkdir(base_path / 'renders')
+    gts_path = mkdir(base_path / 'gt')
 
     hp = scene.hp
     if hp.rasterizer == 'depth':
-        depth_path = base_path / 'depth'
-        weight_path = base_path / 'weight'
-        depth_path.mkdir(exist_ok=True)
-        weight_path.mkdir(exist_ok=True)
-        finalT_path = base_path / 'finalT'
+        depth_path = mkdir(base_path / 'depth')
+        weight_path = mkdir(base_path / 'weight')
     elif hp.rasterizer == 'ours':
-        n_contrib_path = base_path / 'n_contrib'
-        finalT_path.mkdir(exist_ok=True)
-        n_contrib_path.mkdir(exist_ok=True)
+        n_contrib_path = mkdir(base_path / 'n_contrib')
+        finalT_path = mkdir(base_path / 'finalT')
 
     gaussians: GaussianModel = scene.gaussians
     views: List[Camera] = getattr(scene, f'get_{split}_cameras')()
