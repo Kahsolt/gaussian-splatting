@@ -34,8 +34,6 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
         from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
     elif hp.rasterizer == 'depth':
         from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
-    elif hp.rasterizer == 'ours-dev':
-        from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
     else:
         raise ValueError(f'>> unknown supported rasterizer engine: {hp.rasterizer} for this model')
 
@@ -107,10 +105,10 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
     if hp.rasterizer == 'depth':
         depth_map = extra_data[0]
         weight_map = extra_data[1]
-    elif hp.rasterizer == 'ours-dev':
+    elif hp.rasterizer == 'ours':
         imgBuffer = extra_data[0]
-        img_state = ImageState(imgBuffer, (raster_settings.image_height, raster_settings.image_width))
         n_contrib = extra_data[1]
+        img_state = extra_data[2]
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
@@ -142,8 +140,8 @@ def render_set(scene:Scene, split:str):
         weight_path = base_path / 'weight'
         depth_path.mkdir(exist_ok=True)
         weight_path.mkdir(exist_ok=True)
-    elif hp.rasterizer == 'ours-dev':
         finalT_path = base_path / 'finalT'
+    elif hp.rasterizer == 'ours':
         n_contrib_path = base_path / 'n_contrib'
         finalT_path.mkdir(exist_ok=True)
         n_contrib_path.mkdir(exist_ok=True)
@@ -160,7 +158,7 @@ def render_set(scene:Scene, split:str):
         if hp.rasterizer == 'depth':
             save_image(render_pkg['depth_map'] / render_pkg['depth_map'].max(), depth_path / f'{idx:05d}.png')
             save_image(render_pkg['weight_map'], weight_path / f'{idx:05d}.png')
-        elif hp.rasterizer == 'ours-dev':
+        elif hp.rasterizer == 'ours':
             img_state: ImageState = render_pkg['img_state']
             save_image(img_state.final_T, finalT_path / f'{idx:05d}.png')
             plt.clf()

@@ -24,18 +24,17 @@ from modules.scene import Scene, Camera
 from modules.utils.general_utils import ImageState
 from modules.utils.sh_utils import eval_sh
 
+from .hparam import HyperParams
 from .model import GaussianModel
 
 
 def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:float=1.0, override_color:Tensor=None) -> Dict[str, Tensor]:
-    hp = pc.hp
+    hp: HyperParams = pc.hp
     if hp.rasterizer == 'original':
         from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
     elif hp.rasterizer == 'depth':
         from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
     elif hp.rasterizer == 'ours':
-        from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
-    elif hp.rasterizer == 'ours-dev':
         from diff_gaussian_rasterization_ks import GaussianRasterizationSettings, GaussianRasterizer
     else:
         raise ValueError(f'>> unknown supported rasterizer engine: {hp.rasterizer} for this model')
@@ -46,6 +45,12 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
         screenspace_points.retain_grad()
     except:
         pass
+
+    extra_kwargs = {}
+    if hp.rasterizer == 'ours':
+        extra_kwargs = {
+            'limit_n_contrib': hp.limit_n_contrib,
+        }
 
     # Set up rasterization configuration
     raster_settings = GaussianRasterizationSettings(
@@ -61,6 +66,7 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
         campos=vp_cam.camera_center,
         prefiltered=False,
         debug=hp.debug,
+        **extra_kwargs,
     )
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
@@ -116,13 +122,9 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
     )
 
     if hp.rasterizer == 'ours':
-        tmp = extra_data[0]
-        importance_map = radii
-        radii = tmp
-    elif hp.rasterizer == 'ours-dev':
-        imgBuffer = extra_data[0]
-        img_state = ImageState(imgBuffer, (raster_settings.image_height, raster_settings.image_width))
+        importance_map = extra_data[0]
         n_contrib = extra_data[1]
+        img_state = extra_data[2]
     elif hp.rasterizer == 'depth':
         depth_map = extra_data[0]
         weight_map = extra_data[1]
@@ -134,9 +136,9 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
         'viewspace_points': screenspace_points,
         'visibility_filter': radii > 0,
         'radii': radii,
-        'img_state': locals().get('img_state'),
-        'n_contrib': locals().get('n_contrib'),
         'importance_map': locals().get('importance_map'),
+        'n_contrib': locals().get('n_contrib'),
+        'img_state': locals().get('img_state'),
         'depth_map': locals().get('depth_map'),
         'weight_map': locals().get('weight_map'),
     }
@@ -156,7 +158,6 @@ def render_set(scene:Scene, split:str):
     if hp.rasterizer == 'ours':
         importance_path = base_path / 'importance'
         importance_path.mkdir(exist_ok=True)
-    elif hp.rasterizer == 'ours-dev':
         finalT_path = base_path / 'finalT'
         finalT_path.mkdir(exist_ok=True)
         n_contrib_path = base_path / 'n_contrib'
@@ -178,7 +179,6 @@ def render_set(scene:Scene, split:str):
 
         if hp.rasterizer == 'ours':
             save_image(gaussians.importance_activation(render_pkg['importance_map']), importance_path / f'{idx:05d}.png')
-        elif hp.rasterizer == 'ours-dev':
             img_state: ImageState = render_pkg['img_state']
             save_image(img_state.final_T, finalT_path / f'{idx:05d}.png')
             plt.clf()

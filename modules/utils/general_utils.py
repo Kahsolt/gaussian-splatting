@@ -26,8 +26,12 @@ RASTERIZER_PROVIDERS = [
     'original',
     'depth',
     'ours',
-    'ours-dev',
 ]
+
+try:
+    from diff_gaussian_rasterization_ks import ImageState
+except ImportError:
+    ImageState = type(None)
 
 
 def safe_state(silent:bool):
@@ -51,35 +55,3 @@ def safe_state(silent:bool):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device('cuda:0'))
-
-
-class ImageState:
-
-    def __init__(self, buffer:Tensor, size:Tuple[int, int], align:int=128):
-        H, W = size
-        N = H * W
-        offset = 0
-        buffer = buffer.cpu().numpy()
-
-        def next_offset() -> int:
-            nonlocal offset
-            while offset % align:
-                offset += 1
-
-        next_offset()
-        final_T = torch.frombuffer(memoryview(buffer[offset:offset+4*N]), dtype=torch.float32).reshape((H, W))
-        next_offset()
-        n_contrib = torch.frombuffer(memoryview(buffer[offset:offset+4*N]), dtype=torch.int32).reshape((H, W))
-        next_offset()
-        ranges = torch.frombuffer(memoryview(buffer[offset:offset+8*N]), dtype=torch.int32).reshape((H, W, 2))
-
-        self._final_T = final_T      # float, 4 bytes
-        self._n_contrib = n_contrib  # uint32_t, 4 bytes
-        self._ranges = ranges        # uint2, 8 bytes
-
-    @property
-    def final_T(self): return self._final_T
-    @property
-    def n_contrib(self): return self._n_contrib
-    @property
-    def ranges(self): return self._ranges

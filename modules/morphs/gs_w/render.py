@@ -83,7 +83,7 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
         occlusions = torch.ones_like(pc.opacity)
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
-    rendered_image, occlusions, radii = rasterizer(
+    rendered_image, radii, *extra_data = rasterizer(
         means3D=means3D[visible_mask],
         means2D=means2D[visible_mask],
         shs=None,
@@ -103,7 +103,7 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
     # They will be excluded from value updates used in the splitting criteria.
     return {
         'render': rendered_image,
-        'occlusions': occlusions,
+        'occlusions': extra_data[0],
         'viewspace_points': screenspace_points,
         'visibility_filter': visibility_filter,
         'radii': radii_expand,

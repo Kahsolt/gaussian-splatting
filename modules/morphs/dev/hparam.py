@@ -32,7 +32,8 @@ class HyperParams(HyperParams_SH):
         self.nerfw_loss = False
 
         ''' Pipeline '''
-        self.convert_SHs_python = False
+        self.rasterizer = 'ours'
+        self.limit_n_contrib = -1
 
     def extract_from(self, args: Namespace):
         super().extract_from(args)
