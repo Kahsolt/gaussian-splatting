@@ -25,5 +25,6 @@ Also, you could alway copy from the original 3D-GS implementation `morphs/gs`, a
         - cd_mulx_gs: rendered = rgb (~=视角无关的基本色/均色) * gate (视角独立的值域放缩，使用独立特征)
     - if_gs: multi-freq gaussian
     - gs_w: add gaussian importance, appearance & occlusion embedding
+      - fgbg_gs: rendered = where(mask > 0, fg, bg)
     - occlu_gs: absorb occlusions in gt
   - dev: free experimental playground (still use SH)
