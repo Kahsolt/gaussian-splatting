@@ -9,7 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-# train all gaussians together
+# train gaussians one by one
 
 from pathlib import Path
 from random import shuffle
@@ -30,7 +30,6 @@ from .hparam import HyperParams
 from .scene import Scene
 from .camera import Camera
 from .model import SingleFreqGaussianModel
-from .image_utils_torch import combine_freqs_torch
 from .render import render
 
 
@@ -69,34 +68,25 @@ def train(args:Namespace, hp:HyperParams):
         gaussians.setup_training()
         if hp.load: start_steps = scene.load_checkpoint(hp.load)
 
-    ''' Train '''
-    viewpoint_stack: List[Camera] = None
-    start_steps += 1
-    pbar = tqdm(range(start_steps, hp.iterations + 1), desc='Training progress')
-    for steps in range(start_steps, hp.iterations + 1):
-        # Debug
-        if steps == args.debug_from: hp.debug = True
-        if args.network_gui: network_gui_handle(render, scene, steps)
-
-        # Pick a random Camera
-        if not viewpoint_stack:
-            viewpoint_stack = scene.get_train_cameras().copy()
-            shuffle(viewpoint_stack)
-        viewpoint_cam = viewpoint_stack.pop()
-
-        # per-freq gaussian (before grad)
-        n_freq_imgs = []
-        n_freq_losses = []
-        viewspace_points_list = []
-        visibility_filter_list = []
-        radii_list = []
-        for freq_idx in scene.all_gaussians.keys():
-            gaussians = scene.activate_gaussian(freq_idx)
+        ''' Train '''
+        viewpoint_stack: List[Camera] = None
+        start_steps += 1
+        pbar = tqdm(range(start_steps, hp.iterations + 1), desc='Training progress')
+        for steps in range(start_steps, hp.iterations + 1):
+            # Debug
+            if steps == args.debug_from: hp.debug = True
+            if args.network_gui: network_gui_handle(render, scene, steps)
 
             ts_start.record()
 
             # Decay learning rate
             gaussians.update_learning_rate(steps)
+
+            # Pick a random Camera
+            if not viewpoint_stack:
+                viewpoint_stack = scene.get_train_cameras().copy()
+                shuffle(viewpoint_stack)
+            viewpoint_cam = viewpoint_stack.pop()
 
             # Render
             render_pkg = render(gaussians, viewpoint_cam, scene.random_background() if hp.random_background else scene.background)
@@ -105,22 +95,15 @@ def train(args:Namespace, hp:HyperParams):
             visibility_filter = render_pkg['visibility_filter'] # [P=182686]
             radii = render_pkg['radii']                         # [P=182686], int32
 
-            # pack for optimize
-            n_freq_imgs.append(image)
-            viewspace_points_list.append(viewspace_points)
-            visibility_filter_list.append(visibility_filter)
-            radii_list.append(radii)
-
-            # freq loss
+            # Loss
             gt_image = viewpoint_cam.image(freq_idx).cuda()
             Ll1 = l1_loss(image, gt_image)
             Lssim = ssim(image, gt_image)
             loss: Tensor = (1.0 - hp.lambda_dssim) * Ll1 + hp.lambda_dssim * (1.0 - Lssim)
-            n_freq_losses.append(loss)
+            loss.backward()
 
             ts_end.record()
 
-            # log
             with torch.no_grad():
                 # Progress bar
                 loss_ema_for_log = 0.4 * loss.item() + 0.6 * loss_ema_for_log
@@ -137,12 +120,12 @@ def train(args:Namespace, hp:HyperParams):
                     save_image(rendered_cat, save_dir / f'{steps:05d}-{viewpoint_cam.uid}.png')
 
                 # Log and save
-                sw.add_scalar(f'train_loss_patches-f{freq_idx}/l1_loss', Ll1.mean().item(), global_step=steps)
-                sw.add_scalar(f'train_loss_patches-f{freq_idx}/total_loss', loss.item(), global_step=steps)
-                sw.add_scalar(f'iter_time-f{freq_idx}', ts_start.elapsed_time(ts_end), global_step=steps)
-                sw.add_scalar(f'n_points-f{freq_idx}', gaussians.n_points, global_step=steps)
+                sw.add_scalar('train_loss_patches/l1_loss', Ll1.mean().item(), global_step=steps)
+                sw.add_scalar('train_loss_patches/total_loss', loss.item(), global_step=steps)
+                sw.add_scalar('iter_time', ts_start.elapsed_time(ts_end), global_step=steps)
+                sw.add_scalar('n_points', gaussians.n_points, global_step=steps)
                 if steps in hp.test_iterations:
-                    sw.add_histogram(f'scene-f{freq_idx}/opacity_histogram', gaussians.opacity, global_step=steps)
+                    sw.add_histogram('scene/opacity_histogram', gaussians.opacity, global_step=steps)
 
                     validation_configs: Dict[str, List[Camera]] = {
                         'test': scene.get_test_cameras(),
@@ -159,9 +142,9 @@ def train(args:Namespace, hp:HyperParams):
                             rendered = torch.clamp(render_pkg['render'], 0.0, 1.0)
                             gt = viewpoint.image(freq_idx).cuda()
                             if idx < 5:
-                                sw.add_images(f'{split}_view_{viewpoint.image_name}-f{freq_idx}/render', rendered, global_step=steps, dataformats='CHW')
+                                sw.add_images(f'{split}_view_{viewpoint.image_name}/render', rendered, global_step=steps, dataformats='CHW')
                                 if steps == hp.test_iterations[0]:
-                                    sw.add_images(f'{split}_view_{viewpoint.image_name}-f{freq_idx}/gt', gt, global_step=steps, dataformats='CHW')
+                                    sw.add_images(f'{split}_view_{viewpoint.image_name}/gt', gt, global_step=steps, dataformats='CHW')
                             l1_test += l1_loss(rendered, gt).mean()
                             psnr_test += psnr(rendered, gt).mean()
                             total += 1
@@ -169,34 +152,11 @@ def train(args:Namespace, hp:HyperParams):
                         psnr_test /= total
                         print(f'[ITER {steps}] Evaluating {split}: L1 {l1_test}, PSNR {psnr_test}')
 
-                        sw.add_scalar(f'{split}-f{freq_idx}/l1', l1_test, global_step=steps)
-                        sw.add_scalar(f'{split}-f{freq_idx}/psnr', psnr_test, global_step=steps)
+                        sw.add_scalar(f'{split}/l1', l1_test, global_step=steps)
+                        sw.add_scalar(f'{split}/psnr', psnr_test, global_step=steps)
 
                     torch.cuda.empty_cache()
 
-        # combined loss
-        gt_image = viewpoint_cam.gt_image.cuda()
-        combined_image = combine_freqs_torch(n_freq_imgs)
-        Ll1 = l1_loss(combined_image, gt_image)
-        Lssim = ssim(combined_image, gt_image)
-        combined_freq_loss: Tensor = (1.0 - hp.lambda_dssim) * Ll1 + hp.lambda_dssim * (1.0 - Lssim)
-
-        # backward total loss
-        per_freq_loss = sum(n_freq_losses)
-        loss = per_freq_loss + combined_freq_loss * 1.0
-        loss.backward()
-
-        # per-freq gaussian (after grad)
-        for freq_idx in scene.all_gaussians.keys():
-            gaussians = scene.activate_gaussian(freq_idx)
-
-            # unpack for optimize
-            visibility_filter = visibility_filter_list[freq_idx]
-            viewspace_points = viewspace_points_list[freq_idx]
-            radii = radii_list[freq_idx]
-
-            # optimize
-            with torch.no_grad():
                 # Densification
                 if steps < hp.densify_until_iter:
                     # Keep track of max radii in image-space for pruning

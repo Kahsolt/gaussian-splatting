@@ -225,8 +225,7 @@ class App:
       assert isinstance(self.scene, Scene_if_gs)
       rendered_set = []
       for freq_idx in range(self.scene.gaussians.n_gaussians):
-        self.scene.activate_gaussian(freq_idx)
-        gaussian = self.scene.cur_gaussian.cuda()
+        gaussian = self.scene.activate_gaussian(freq_idx).cuda()
         render_pkg = self.render_func(vp_cam, pc=gaussian, scale=scale)
         rendered_set.append(render_pkg['render'].clamp_(0, 1))
     else:

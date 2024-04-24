@@ -18,6 +18,8 @@ from torch import Tensor
 from torchvision.utils import save_image
 from tqdm import tqdm
 
+from modules.utils.general_utils import mkdir
+
 from .scene import Scene
 from .camera import Camera
 from .model import SingleFreqGaussianModel, MutilFreqGaussianModel
@@ -113,8 +115,7 @@ def render_set(scene:Scene, split:str):
     views: List[Camera] = getattr(scene, f'get_{split}_cameras')()
     for idx, view in enumerate(tqdm(views, desc='Rendering progress')):
         for freq_idx in range(multifreq_gaussians.n_gaussians):
-            scene.activate_gaussian(freq_idx)
-            gaussians: SingleFreqGaussianModel = scene.cur_gaussian
+            gaussians = scene.activate_gaussian(freq_idx)
             render_pkg = render(gaussians, view, scene.background)
             rendered = render_pkg['render']
             gt = view.image(freq_idx)[0:3, ...].cuda()

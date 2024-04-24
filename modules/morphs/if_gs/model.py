@@ -42,13 +42,14 @@ class MutilFreqGaussianModel:
     def get_gaussian(self, idx:int):
         return self.gaussians[idx]
 
-    def activate_gaussian(self, idx:int=0):
+    def activate_gaussian(self, idx:int=0, swap:bool=True):
         last_idx = self.cur_idx
         if idx == last_idx:
             self.gaussians[self.cur_idx].cuda()
         else:
             self.cur_idx = idx
-            self.gaussians[last_idx].cpu()
+            if swap:
+                self.gaussians[last_idx].cpu()
             self.gaussians[self.cur_idx].cuda()
 
     def from_pcd(self, pcd:BasicPointCloud):

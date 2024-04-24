@@ -50,8 +50,9 @@ class Scene(SceneBase):
     def all_gaussians(self) -> Dict[int, SingleFreqGaussianModel]:
         return self.gaussians.gaussians
 
-    def activate_gaussian(self, idx:int=0):
-        self.gaussians.activate_gaussian(idx)
+    def activate_gaussian(self, idx:int=0, swap:bool=False) -> SingleFreqGaussianModel:
+        self.gaussians.activate_gaussian(idx, swap)
+        return self.cur_gaussian
 
     def save_gaussian(self, steps:int):
         base_dir = mkdir(self.model_path / 'point_cloud' / f'iteration_{steps}', parents=True)

@@ -20,8 +20,8 @@ class HyperParams(HyperParams_Neural):
         ''' Model '''
         self.hidden_dim = 32
         self.feat_dim = 32
-        self.L_freq = 4
-        self.scale_w = 0.01
+        self.L_freq = 2
+        self.scale_w = 0.05
         self.split_kind = 'addictive'   # 'cumulative' 'addictive'
         self.mutil_method = 'copy'      # 'uniform_sparse', 'copy'
         self.add_view = True
