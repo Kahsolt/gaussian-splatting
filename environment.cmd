@@ -18,3 +18,4 @@ SET DISTUTILS_USE_SDK=1
 pip install submodules/diff-gaussian-rasterization
 pip install submodules/diff-gaussian-rasterization-kahsolt
 pip install submodules/simple-knn
+pip install submodules/pytorch_wavelets

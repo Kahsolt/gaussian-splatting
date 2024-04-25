@@ -7,3 +7,6 @@
 [submodule "submodules/diff-gaussian-rasterization-kahsolt"]
 	path = submodules/diff-gaussian-rasterization-kahsolt
 	url = https://gitee.com/kahsolt/diff-gaussian-rasterization
+[submodule "submodules/pytorch_wavelets"]
+	path = submodules/pytorch_wavelets
+	url = https://github.com/fbcotter/pytorch_wavelets

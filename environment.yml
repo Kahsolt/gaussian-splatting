@@ -16,3 +16,4 @@ dependencies:
     - submodules/diff-gaussian-rasterization
     - submodules/diff-gaussian-rasterization-kahsolt
     - submodules/simple-knn
+    - submodules/pytorch_wavelets

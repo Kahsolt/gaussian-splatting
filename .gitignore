@@ -7,8 +7,6 @@ build
 tensorboard_3d
 screenshots
 
-/data/
-submodules/*
-!submodules/*.cmd
+data/
 SIBR_viewers_bin/*
 !SIBR_viewers_bin/*.cmd

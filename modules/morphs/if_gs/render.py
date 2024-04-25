@@ -23,6 +23,7 @@ from modules.utils.general_utils import mkdir
 from .scene import Scene
 from .camera import Camera
 from .model import SingleFreqGaussianModel, MutilFreqGaussianModel
+from .image_utils import combine_freqs
 
 
 def render(pc:SingleFreqGaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:float=1.0, override_color:Tensor=None) -> Dict[str, Tensor]:
@@ -111,16 +112,24 @@ def render_set(scene:Scene, split:str):
     render_path = mkdir(base_path / 'renders')
     gts_path = mkdir(base_path / 'gt')
 
+    hp = scene.hp
     multifreq_gaussians: MutilFreqGaussianModel = scene.gaussians
     views: List[Camera] = getattr(scene, f'get_{split}_cameras')()
     for idx, view in enumerate(tqdm(views, desc='Rendering progress')):
+        n_freq_imgs = []
         for freq_idx in range(multifreq_gaussians.n_gaussians):
             gaussians = scene.activate_gaussian(freq_idx)
             render_pkg = render(gaussians, view, scene.background)
             rendered = render_pkg['render']
-            gt = view.image(freq_idx)[0:3, ...].cuda()
+            n_freq_imgs.append(rendered)
+            gt = view.image(freq_idx)[:3]
 
             render_freq_path = mkdir(render_path / f'freq_{freq_idx}')
             gts_freq_path = mkdir(gts_path / f'freq_{freq_idx}')
             save_image(rendered, render_freq_path / f'{idx:05d}.png')
             save_image(gt, gts_freq_path / f'{idx:05d}.png')
+
+        combined = combine_freqs(hp.split_method, n_freq_imgs, **hp.get_split_freqs_kwargs())
+        gt = view.gt_image[:3]
+        save_image(combined, render_path / f'{idx:05d}.png')
+        save_image(gt, gts_path / f'{idx:05d}.png')

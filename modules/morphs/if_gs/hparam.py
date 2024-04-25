@@ -9,27 +9,42 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-from modules.hparam import HyperParams_Neural
+from argparse import Namespace
+from modules.morphs.mlp_gs.hparam import HyperParams as HyperParamsBase
 
 
-class HyperParams(HyperParams_Neural):
+class HyperParams(HyperParamsBase):
+
+    ''' based on mlp-gs '''
 
     def __init__(self):
         super().__init__()
 
         ''' Model '''
-        self.hidden_dim = 32
-        self.feat_dim = 32
-        self.L_freq = 2
-        self.scale_w = 0.05
-        self.split_kind = 'addictive'   # 'cumulative' 'addictive'
-        self.mutil_method = 'copy'      # 'uniform_sparse', 'copy'
-        self.add_view = True
+        self.split_method = 'fft'
+        self.blur_r = 5         # for unsharp_mask
+        self.blur_s = 1.1       # for unsharp_mask
+        self.n_freqs = 2        # for fft, svd
+        self.scale_w = 0.05     # for fft, svd
+        self.wavlet = 'db3'     # for dwt
+        self.padding = 'zero'   # for dwt
 
-        ''' Optimizer '''
-        self.feature_lr = 0.0075
-    
-        self.mlp_color_lr_init = 0.008
-        self.mlp_color_lr_final = 0.00005
-        self.mlp_color_lr_delay_mult = 0.01
-        self.mlp_color_lr_max_steps = 30_000
+        self.sub_gauss_init = 'copy'
+
+    def get_split_freqs_kwargs(self):
+        return {
+            'n_freqs': self.n_freqs,
+            'scale_w': self.scale_w,
+            'r': self.blur_r,
+            's': self.blur_s,
+            'wavlet': self.wavlet,
+            'padding': self.padding,
+        }
+
+    def extract_from(self, args: Namespace):
+        super().extract_from(args)
+        assert self.split_method in ['unsharp_mask', 'fft', 'svd', 'dwt']
+        assert self.sub_gauss_init in ['copy', 'uniform_sparse']
+
+        if self.split_method == 'unsharp_mask':
+            assert self.n_freqs == 2

@@ -37,6 +37,7 @@ def read_images(renders_dir:Path, gt_dir:Path) -> Tuple[List[Tensor], List[Tenso
     gts     = []
     names   = []
     for fp in renders_dir.iterdir():
+        if fp.is_dir(): continue
         fn = fp.name
         renders.append(pil_to_tensor(Image.open(renders_dir / fn)))
         gts.append(pil_to_tensor(Image.open(gt_dir / fn)))

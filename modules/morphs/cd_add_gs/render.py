@@ -123,9 +123,9 @@ def render_set(scene:Scene, split:str):
     for idx, view in enumerate(tqdm(views, desc='Rendering progress')):
         render_pkg = render(gaussians, view, scene.background)
         rendered_set = render_pkg['render']
-        rendered_mix = mix_image(rendered_set)
-        gt = view.image[0:3, ...].cuda()
-        rendered_cat = torch.cat([torch.cat(rendered_set, -1), rendered_mix, gt], -1)
+        rendered_mix = mix_image(rendered_set).cpu()
+        gt = view.image[:3]
+        rendered_cat = torch.cat([torch.cat(rendered_set, -1).cpu(), rendered_mix, gt], -1)
         save_image(rendered_mix, render_path / f'{idx:05d}.png')
         save_image(gt, gts_path / f'{idx:05d}.png')
         save_image(rendered_cat, de_render_path / f'{idx:05d}.png')

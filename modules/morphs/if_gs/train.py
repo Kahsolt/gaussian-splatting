@@ -30,7 +30,7 @@ from .hparam import HyperParams
 from .scene import Scene
 from .camera import Camera
 from .model import SingleFreqGaussianModel
-from .image_utils_torch import combine_freqs_torch
+from .image_utils import combine_freqs
 from .render import render
 
 
@@ -137,12 +137,14 @@ def train(args:Namespace, hp:HyperParams):
                     save_image(rendered_cat, save_dir / f'{steps:05d}-{viewpoint_cam.uid}.png')
 
                 # Log and save
-                sw.add_scalar(f'train_loss_patches-f{freq_idx}/l1_loss', Ll1.mean().item(), global_step=steps)
-                sw.add_scalar(f'train_loss_patches-f{freq_idx}/total_loss', loss.item(), global_step=steps)
-                sw.add_scalar(f'iter_time-f{freq_idx}', ts_start.elapsed_time(ts_end), global_step=steps)
-                sw.add_scalar(f'n_points-f{freq_idx}', gaussians.n_points, global_step=steps)
+                sw.add_scalar(f'train-f{freq_idx}/l1_loss', Ll1.mean().item(), global_step=steps)
+                sw.add_scalar(f'train-f{freq_idx}/total_loss', loss.item(), global_step=steps)
+                sw.add_scalar(f'train-f{freq_idx}/iter_time', ts_start.elapsed_time(ts_end), global_step=steps)
+                sw.add_scalar(f'train-f{freq_idx}/n_points', gaussians.n_points, global_step=steps)
+
+                # test interval (render per-freq)
                 if steps in hp.test_iterations:
-                    sw.add_histogram(f'scene-f{freq_idx}/opacity_histogram', gaussians.opacity, global_step=steps)
+                    sw.add_histogram(f'train-f{freq_idx}/scene_opacity_histogram', gaussians.opacity, global_step=steps)
 
                     validation_configs: Dict[str, List[Camera]] = {
                         'test': scene.get_test_cameras(),
@@ -167,7 +169,7 @@ def train(args:Namespace, hp:HyperParams):
                             total += 1
                         l1_test /= total
                         psnr_test /= total
-                        print(f'[ITER {steps}] Evaluating {split}: L1 {l1_test}, PSNR {psnr_test}')
+                        print(f'[ITER {steps}] Evaluating {split}-f{freq_idx}: L1 {l1_test}, PSNR {psnr_test}')
 
                         sw.add_scalar(f'{split}-f{freq_idx}/l1', l1_test, global_step=steps)
                         sw.add_scalar(f'{split}-f{freq_idx}/psnr', psnr_test, global_step=steps)
@@ -176,7 +178,7 @@ def train(args:Namespace, hp:HyperParams):
 
         # combined loss
         gt_image = viewpoint_cam.gt_image.cuda()
-        combined_image = combine_freqs_torch(n_freq_imgs)
+        combined_image = combine_freqs(hp.split_method, n_freq_imgs, **hp.get_split_freqs_kwargs())
         Ll1 = l1_loss(combined_image, gt_image)
         Lssim = ssim(combined_image, gt_image)
         combined_freq_loss: Tensor = (1.0 - hp.lambda_dssim) * Ll1 + hp.lambda_dssim * (1.0 - Lssim)
@@ -197,6 +199,9 @@ def train(args:Namespace, hp:HyperParams):
 
             # optimize
             with torch.no_grad():
+                sw.add_scalar(f'train-combined/l1_loss', Ll1.item(), global_step=steps)
+                sw.add_scalar(f'train-combined/total_loss', combined_freq_loss.item(), global_step=steps)
+
                 # Densification
                 if steps < hp.densify_until_iter:
                     # Keep track of max radii in image-space for pruning
@@ -221,3 +226,42 @@ def train(args:Namespace, hp:HyperParams):
                 if steps in hp.checkpoint_iterations:
                     print(f'[ITER {steps}] Saving Checkpoint')
                     scene.save_checkpoint(steps)
+
+        # test interval (render combined)
+        if steps in hp.test_iterations:
+            validation_configs: Dict[str, List[Camera]] = {
+                'test': scene.get_test_cameras(),
+                'train': [scene.get_train_cameras()[idx % len(scene.get_train_cameras())] for idx in range(5, 30, 5)],
+            }
+
+            torch.cuda.empty_cache()
+            for split, cameras in validation_configs.items():
+                if not cameras or not len(cameras): continue
+
+                l1_test, psnr_test, total = 0.0, 0.0, 0
+                for idx, viewpoint in enumerate(cameras):
+                    n_freq_imgs = []
+                    for freq_idx in scene.all_gaussians.keys():
+                        gaussians = scene.activate_gaussian(freq_idx)
+                        render_pkg = render(gaussians, viewpoint, scene.background)
+                        rendered = render_pkg['render']
+                        n_freq_imgs.append(rendered)
+
+                    rendered = combine_freqs(hp.split_method, n_freq_imgs, **hp.get_split_freqs_kwargs())
+                    rendered = torch.clamp(rendered, 0.0, 1.0)
+                    gt = viewpoint_cam.gt_image.cuda()
+                    if idx < 5:
+                        sw.add_images(f'{split}_view_{viewpoint.image_name}-combined/render', rendered, global_step=steps, dataformats='CHW')
+                        if steps == hp.test_iterations[0]:
+                            sw.add_images(f'{split}_view_{viewpoint.image_name}-combined/gt', gt, global_step=steps, dataformats='CHW')
+                    l1_test += l1_loss(rendered, gt).mean()
+                    psnr_test += psnr(rendered, gt).mean()
+                    total += 1
+                l1_test /= total
+                psnr_test /= total
+                print(f'[ITER {steps}] Evaluating {split}-combined: L1 {l1_test}, PSNR {psnr_test}')
+
+                sw.add_scalar(f'{split}-combined/l1', l1_test, global_step=steps)
+                sw.add_scalar(f'{split}-combined/psnr', psnr_test, global_step=steps)
+
+            torch.cuda.empty_cache()

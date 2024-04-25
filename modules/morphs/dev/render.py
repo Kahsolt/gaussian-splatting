@@ -166,7 +166,7 @@ def render_set(scene:Scene, split:str):
     for idx, view in enumerate(tqdm(views, desc='Rendering progress')):
         render_pkg = render(gaussians, view, scene.background)
         rendered = render_pkg['render']
-        gt = view.image[0:3, ...].cuda()
+        gt = view.image[:3]
         save_image(rendered, render_path / f'{idx:05d}.png')
         save_image(gt, gts_path / f'{idx:05d}.png')
 

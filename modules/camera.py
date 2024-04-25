@@ -101,10 +101,10 @@ def load_camera(resolution:float, id:int, cam_info:CameraInfo, resolution_scale:
         resolution = (int(orig_w / scale), int(orig_h / scale))
 
     resized_image_rgb = PILtoTorch(cam_info.image, resolution)
-    gt_image = resized_image_rgb[:3, ...]
+    gt_image = resized_image_rgb[:3]
     loaded_mask = None
     if resized_image_rgb.shape[1] == 4:
-        loaded_mask = resized_image_rgb[3:4, ...]
+        loaded_mask = resized_image_rgb[-1:]
 
     return Camera(
         uid=id, colmap_id=cam_info.uid, 

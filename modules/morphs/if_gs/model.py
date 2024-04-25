@@ -23,10 +23,12 @@ from .hparam import HyperParams
 
 class MutilFreqGaussianModel:
 
+    ''' based on mlp-gs '''
+
     def __init__(self, hp:HyperParams):
         self.hp: HyperParams = hp
 
-        self.gaussians = {idx: SingleFreqGaussianModel(hp) for idx in range(hp.L_freq)}
+        self.gaussians = {idx: SingleFreqGaussianModel(hp) for idx in range(hp.n_freqs)}
         self.cur_idx = 0
 
         self.spatial_lr_scale = 1.0
@@ -64,8 +66,8 @@ class MutilFreqGaussianModel:
         init_rotation[:, 0] = 1
         init_opacity = inverse_sigmoid(0.1 * torch.ones((n_pts, 1), dtype=torch.float, device='cuda'))
 
-        if hp.mutil_method == 'copy':
-            for idx in range(hp.L_freq):
+        if hp.sub_gauss_init == 'copy':
+            for idx in range(hp.n_freqs):
                 gaussians = self.get_gaussian(idx)
                 gaussians.spatial_lr_scale = self.spatial_lr_scale
                 gaussians._xyz      = nn.Parameter(init_xyz,      requires_grad=True)
@@ -74,18 +76,18 @@ class MutilFreqGaussianModel:
                 gaussians._features = nn.Parameter(init_features, requires_grad=True)
                 gaussians._opacity  = nn.Parameter(init_opacity,  requires_grad=True)
                 print(f'Number of points of freq_{idx} at initialization:', gaussians.n_points)
-        elif hp.mutil_method == 'uniform_sparse':
-            for idx in range(hp.L_freq):
+        elif hp.sub_gauss_init == 'uniform_sparse':
+            for idx in range(hp.n_freqs):
                 gaussians = self.get_gaussian(idx)
                 gaussians.spatial_lr_scale = self.spatial_lr_scale
-                gaussians._xyz      = nn.Parameter(init_xyz     [idx::hp.L_freq], requires_grad=True)
-                gaussians._scaling  = nn.Parameter(init_scaling [idx::hp.L_freq], requires_grad=True)
-                gaussians._rotation = nn.Parameter(init_rotation[idx::hp.L_freq], requires_grad=True)
-                gaussians._features = nn.Parameter(init_features[idx::hp.L_freq], requires_grad=True)
-                gaussians._opacity  = nn.Parameter(init_opacity [idx::hp.L_freq], requires_grad=True)
+                gaussians._xyz      = nn.Parameter(init_xyz     [idx::hp.n_freqs], requires_grad=True)
+                gaussians._scaling  = nn.Parameter(init_scaling [idx::hp.n_freqs], requires_grad=True)
+                gaussians._rotation = nn.Parameter(init_rotation[idx::hp.n_freqs], requires_grad=True)
+                gaussians._features = nn.Parameter(init_features[idx::hp.n_freqs], requires_grad=True)
+                gaussians._opacity  = nn.Parameter(init_opacity [idx::hp.n_freqs], requires_grad=True)
                 print(f'Number of points of freq_{idx} at initialization:', gaussians.n_points)
         else:
-            raise ValueError(f'Unknown kind: {hp.mutil_method}')
+            raise ValueError(f'Unknown kind: {hp.sub_gauss_init}')
 
 
 # unify interface name :)
