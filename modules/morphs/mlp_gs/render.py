@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import List, Dict
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 from torchvision.utils import save_image
 from tqdm import tqdm
 
 from modules.scene import Scene, Camera
-from modules.utils.general_utils import mkdir
+from modules.utils.general_utils import mkdir, minmax_norm
 
 from .model import GaussianModel
 
@@ -74,7 +75,7 @@ def render(pc:GaussianModel, vp_cam:Camera, bg_color:Tensor, scaling_modifier:fl
         visible_mask = rasterizer.markVisible(positions=means3D)
         colors_precomp = pc.feature_encoder(vp_cam, visible_mask)
     else:
-        visible_mask = slice(None)
+        visible_mask = torch.ones([pc.n_points], dtype=torch.bool, device=pc.xyz.device)
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
@@ -119,3 +120,51 @@ def render_set(scene:Scene, split:str):
         gt = view.image[:3]
         save_image(rendered, render_path / f'{idx:05d}.png')
         save_image(gt, gts_path / f'{idx:05d}.png')
+
+
+@torch.enable_grad()
+def render_set_debug(scene:Scene, split:str):
+    base_path = mkdir(Path(scene.model_path) / split / f'ours_{scene.load_iter}_debug', parents=True)
+
+    gaussians: GaussianModel = scene.gaussians
+    gaussians.cuda()
+    views: List[Camera] = getattr(scene, f'get_{split}_cameras')()
+    for idx, view in enumerate(tqdm(views, desc='Rendering progress')):
+        render_pkg = render(gaussians, view, scene.background)
+        rendered = render_pkg['render']
+        gt = view.image[:3].cuda()
+
+        # get grads
+        gaussians.zero_grad()
+        loss = F.l1_loss(rendered, gt)
+        print(f'>> [{idx}] loss: {loss.item()}')
+        loss.backward()
+        P_COLORS = {
+            # grad of rendered pixel-space loss over 3D gauss point properties
+            'xyz': gaussians._xyz.grad,                 # [NP, 3]
+            'scale': gaussians._scaling.grad,           # [NP, 3]
+            'feat': gaussians._features.grad,           # [NP, 48]
+            'opacity': gaussians._opacity.grad,         # [NP, 1]
+            # grad of rendered 2D gauss center xy coord over 3D gauss points
+            'vp_xy': render_pkg['viewspace_points'].grad,   # [NP, 3], but only [..., :2] part is non-zero
+        }
+        P_COLORS = {name: pcolor for name, pcolor in P_COLORS.items()}
+
+        with torch.no_grad():
+            for name, pcolor in P_COLORS.items():
+                NP, D = pcolor.shape
+                if D == 3:
+                    render_pkg = render(gaussians, view, scene.background, override_color=pcolor)
+                    rendered = render_pkg['render']
+                    save_image(minmax_norm(rendered), mkdir(base_path / name) / f'{idx:05d}.png')
+                elif D == 1:
+                    pcolor = pcolor.expand((-1, 3))
+                    render_pkg = render(gaussians, view, scene.background, override_color=pcolor)
+                    rendered = render_pkg['render'][0]
+                    save_image(minmax_norm(rendered), mkdir(base_path / name) / f'{idx:05d}.png')
+                else:       # D = 48
+                    for dim in range(D):
+                        pcolor_sub = pcolor[:, dim:dim+1].expand((-1, 3))
+                        render_pkg = render(gaussians, view, scene.background, override_color=pcolor_sub)
+                        rendered = render_pkg['render'][0]
+                        save_image(minmax_norm(rendered), mkdir(base_path / name / f'dim={dim}', parents=True) / f'{idx:05d}.png')

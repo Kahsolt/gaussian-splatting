@@ -47,3 +47,7 @@ python train.py -M dev --m_loss_importance
 python train.py -M dev -m output\train-importance --m_loss_importance
 python train.py -M dev -m output\train-importance --load_iter -1 --sanitize_load_gauss
 SIBR_remoteGaussian_app.exe
+
+:debug_render_set
+python train.py -M mlp_gs -s data\phototourist\brandenburg_gate --eval
+python render.py -m "output\2024-04-28T17-52-59_brandenburg_gate_M=mlp_gs" --debug_render_set --limit 30

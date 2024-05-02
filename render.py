@@ -35,6 +35,7 @@ if __name__ == '__main__':
     parser.add_argument('--skip_train', action='store_true')
     parser.add_argument('--skip_test', action='store_true')
     parser.add_argument('--quiet', action='store_true')
+    parser.add_argument('--debug_render_set', action='store_true')
     args, _ = parser.parse_known_args()
 
     # Initialize system state (RNG)
@@ -60,7 +61,7 @@ if __name__ == '__main__':
             print('>> no overrided Scene class found, use default')
         try:
             mod = import_module(f'modules.morphs.{morph}.render')
-            render_set = getattr(mod, 'render_set')
+            render_set = getattr(mod, 'render_set_debug' if args.debug_render_set else 'render_set')
         except Exception as e:
             raise NotImplementedError('missing implementation of render.py script') from e
     except: print_exc()

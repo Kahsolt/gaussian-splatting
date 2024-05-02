@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Union
 
 import torch
+from torch import Tensor
 import numpy as np
 
 BASE_PATH = Path(__file__).parent.parent.parent
@@ -37,6 +38,11 @@ def mkdir(path: Union[str, Path], parents:bool=False) -> Path:
     p = path if isinstance(path, Path) else Path(path)
     p.mkdir(exist_ok=True, parents=parents)
     return p
+
+
+def minmax_norm(X:Tensor) -> Tensor:
+    vmin, vmax = X.min(), X.max()
+    return (X - vmin) / (vmax - vmin)
 
 
 def safe_state(silent:bool):

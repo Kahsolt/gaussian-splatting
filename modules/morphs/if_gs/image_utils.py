@@ -14,6 +14,8 @@ import torchvision.transforms.functional as TF
 import numpy as np
 from numpy import ndarray
 
+from modules.utils.general_utils import minmax_norm
+
 try:
     # https://pytorch-wavelets.readthedocs.io/en/latest/readme.html
     from pytorch_wavelets import DWT, IDWT
@@ -185,10 +187,6 @@ def _make_grid(imgs:List[Tensor]) -> ndarray:
     return torch.permute(make_grid(torch.stack(imgs, dim=0)), (1, 2, 0)).clamp_(0.0, 1.0).cpu().numpy()
 
 def test_unsharp_mask(X:Tensor) -> ndarray:
-    def minmax_norm(X:Tensor) -> Tensor:
-        vmin, vmax = X.min(), X.max()
-        return (X - vmin) / (vmax - vmin)
-
     # settings
     r = 11
     s = 100

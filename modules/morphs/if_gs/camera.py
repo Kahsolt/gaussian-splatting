@@ -57,7 +57,7 @@ class Camera:
                 imgs[idx] *= mask
 
         self.gt_image = image.clamp_(0.0, 1.0).to(data_device)
-        self.images = [img.clamp_(0.0, 1.0).to(data_device) for img in imgs]
+        self.images = [img.to(data_device) for img in imgs]
         self.image_name = image_name
         self.image_height = self.images[0].shape[1]
         self.image_width = self.images[0].shape[2]

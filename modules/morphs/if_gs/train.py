@@ -24,7 +24,7 @@ from tqdm import tqdm
 from modules import network_gui
 from modules.utils.loss_utils import l1_loss, ssim, psnr
 from modules.utils.training_utils import init_log
-from modules.utils.general_utils import mkdir
+from modules.utils.general_utils import mkdir, minmax_norm
 
 from .hparam import HyperParams
 from .scene import Scene
@@ -133,6 +133,8 @@ def train(args:Namespace, hp:HyperParams):
                 # Peep middle results
                 if steps % 100 == 0:
                     save_dir = mkdir(Path(scene.model_path) / 'look_up' / f'freq_{freq_idx}', parents=True)
+                    if image   .min() < 0: image    = minmax_norm(image)
+                    if gt_image.min() < 0: gt_image = minmax_norm(gt_image)
                     rendered_cat = torch.cat([image, gt_image], -1)
                     save_image(rendered_cat, save_dir / f'{steps:05d}-{viewpoint_cam.uid}.png')
 
@@ -158,7 +160,7 @@ def train(args:Namespace, hp:HyperParams):
                         l1_test, psnr_test, total = 0.0, 0.0, 0
                         for idx, viewpoint in enumerate(cameras):
                             render_pkg = render(gaussians, viewpoint, scene.background)
-                            rendered = torch.clamp(render_pkg['render'], 0.0, 1.0)
+                            rendered = render_pkg['render']
                             gt = viewpoint.image(freq_idx).cuda()
                             if idx < 5:
                                 sw.add_images(f'{split}_view_{viewpoint.image_name}-f{freq_idx}/render', rendered, global_step=steps, dataformats='CHW')
@@ -227,6 +229,12 @@ def train(args:Namespace, hp:HyperParams):
                     print(f'[ITER {steps}] Saving Checkpoint')
                     scene.save_checkpoint(steps)
 
+        # peep middle results (render combined)
+        if steps % 100 == 0:
+            save_dir = mkdir(Path(scene.model_path) / 'look_up' / 'combined', parents=True)
+            combined_cat = torch.cat([combined_image, gt_image], -1)
+            save_image(combined_cat, save_dir / f'{steps:05d}-{viewpoint_cam.uid}.png')
+
         # test interval (render combined)
         if steps in hp.test_iterations:
             validation_configs: Dict[str, List[Camera]] = {
@@ -249,7 +257,7 @@ def train(args:Namespace, hp:HyperParams):
 
                     rendered = combine_freqs(hp.split_method, n_freq_imgs, **hp.get_split_freqs_kwargs())
                     rendered = torch.clamp(rendered, 0.0, 1.0)
-                    gt = viewpoint_cam.gt_image.cuda()
+                    gt = viewpoint.gt_image.cuda()
                     if idx < 5:
                         sw.add_images(f'{split}_view_{viewpoint.image_name}-combined/render', rendered, global_step=steps, dataformats='CHW')
                         if steps == hp.test_iterations[0]:
